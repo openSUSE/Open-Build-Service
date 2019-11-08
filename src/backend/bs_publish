@@ -1510,6 +1510,74 @@ sub clean_blobdir {
   rmdir($blobdir);
 }
 
+sub createrepo {
+  my ($projid, $repoid, $data) = @_;
+  my $prp = "$projid/$repoid";
+  print "    creating repository\n";
+  my $extrep = BSUrlmapper::get_extrep($prp);
+  return unless $extrep;
+  $extrep .= $data->{'dbgsplit'} if $data->{'dbgsplit'};
+
+  my %repotype = %{$data->{'repotype'}};
+  my %patterntype = %{$data->{'patterntype'}};
+
+  my $xrepoid = $repoid;
+  $xrepoid .= $data->{'dbgsplit'} if $data->{'dbgsplit'};
+
+  if ($repotype{'rpm-md'}) {
+    createrepo_rpmmd($extrep, $projid, $xrepoid, $data, $repotype{'rpm-md'});
+  } else {
+    deleterepo_rpmmd($extrep, $projid, $xrepoid, $data);
+  }
+  if ($repotype{'suse'}) {
+    createrepo_susetags($extrep, $projid, $xrepoid, $data, $repotype{'suse'});
+  } else {
+    deleterepo_susetags($extrep, $projid, $xrepoid, $data);
+  }
+  # Mandriva format:
+  if ($repotype{'hdlist2'}) {
+    createrepo_hdlist2($extrep, $projid, $xrepoid, $data, $repotype{'hdlist2'});
+  } else {
+    deleterepo_hdlist2($extrep, $projid, $xrepoid, $data);
+  }
+  if ($repotype{'debian'}) {
+    createrepo_debian($extrep, $projid, $xrepoid, $data, $repotype{'debian'});
+  } else {
+    deleterepo_debian($extrep, $projid, $xrepoid, $data);
+  }
+  if ($repotype{'arch'}) {
+    createrepo_arch($extrep, $projid, $xrepoid, $data, $repotype{'arch'});
+  } else {
+    deleterepo_arch($extrep, $projid, $xrepoid, $data);
+  }
+  if ($repotype{'staticlinks'}) {
+    createrepo_staticlinks($extrep, $projid, $xrepoid, $data, $repotype{'staticlinks'});
+  } else {
+    deleterepo_staticlinks($extrep, $projid, $xrepoid, $data);
+  }
+
+  if ($patterntype{'ymp'}) {
+    createpatterns_ymp($extrep, $projid, $xrepoid, $data, $patterntype{'ymp'});
+  } else {
+    deletepatterns_ymp($extrep, $projid, $xrepoid, $data);
+  }
+  if ($patterntype{'rpm-md'}) {
+    createpatterns_rpmmd($extrep, $projid, $xrepoid, $data, $patterntype{'rpm-md'});
+  } else {
+    deletepatterns_rpmmd($extrep, $projid, $xrepoid, $data);
+  }
+  if ($patterntype{'comps'}) {
+    createpatterns_comps($extrep, $projid, $xrepoid, $data, $patterntype{'comps'});
+  } else {
+    deletepatterns_comps($extrep, $projid, $xrepoid, $data);
+  }
+
+  # virt-builder repository
+  if (-e "$extrep/index") {
+    createrepo_virtbuilder($extrep, $projid, $xrepoid, $data);
+  }
+}
+
 sub deleterepo {
   my ($projid, $repoid, $dbgsplit) = @_;
   my $prp = "$projid/$repoid";
@@ -2621,9 +2689,6 @@ sub publish {
     goto publishprog_done;
   }
 
-  my $xrepoid = $repoid;
-  $xrepoid .= $dbgsplit if $dbgsplit;
-
   my @repotags = @{$repotype{'repotag'} || []};
   # de-escape (mostly done for ':'
   s/%([a-fA-F0-9]{2})/chr(hex($1))/ge for @repotags;
@@ -2648,70 +2713,11 @@ sub publish {
     'packtrack' => $packtrack,
     'repotags' => \@repotags,
     'chksumfiles' => \@chksumfiles,
+    'repotype' => \%repotype,
+    'patterntype' => \%patterntype,
   };
 
-  if ($repotype{'rpm-md'}) {
-    createrepo_rpmmd($extrep, $projid, $xrepoid, $data, $repotype{'rpm-md'});
-  } else {
-    deleterepo_rpmmd($extrep, $projid, $xrepoid, $data);
-  }
-  if ($repotype{'suse'}) {
-    createrepo_susetags($extrep, $projid, $xrepoid, $data, $repotype{'suse'});
-  } else {
-    deleterepo_susetags($extrep, $projid, $xrepoid, $data);
-  }
-  # Mandriva format:
-  if ($repotype{'hdlist2'}) {
-    createrepo_hdlist2($extrep, $projid, $xrepoid, $data, $repotype{'hdlist2'});
-  } else {
-    deleterepo_hdlist2($extrep, $projid, $xrepoid, $data);
-  }
-  if ($repotype{'debian'}) {
-    createrepo_debian($extrep, $projid, $xrepoid, $data, $repotype{'debian'});
-  } else {
-    deleterepo_debian($extrep, $projid, $xrepoid, $data);
-  }
-  if ($repotype{'arch'}) {
-    createrepo_arch($extrep, $projid, $xrepoid, $data, $repotype{'arch'});
-  } else {
-    deleterepo_arch($extrep, $projid, $xrepoid, $data);
-  }
-  if ($repotype{'vagrant'}) {
-    createrepo_vagrant($extrep, $projid, $xrepoid, $data, $repotype{'vagrant'});
-  } else {
-    deleterepo_vagrant($extrep, $projid, $xrepoid, $data);
-  }
-  if ($repotype{'staticlinks'}) {
-    createrepo_staticlinks($extrep, $projid, $xrepoid, $data, $repotype{'staticlinks'});
-  } else {
-    deleterepo_staticlinks($extrep, $projid, $xrepoid, $data);
-  }
-  if ($repotype{'zyppservice'}) {
-    createrepo_zyppservice($extrep, $projid, $xrepoid, $data, $repotype{'zyppservice'});
-  } else {
-    deleterepo_zyppservice($extrep, $projid, $xrepoid, $data);
-  }
-
-  if ($patterntype{'ymp'}) {
-    createpatterns_ymp($extrep, $projid, $xrepoid, $data, $patterntype{'ymp'});
-  } else {
-    deletepatterns_ymp($extrep, $projid, $xrepoid, $data);
-  }
-  if ($patterntype{'rpm-md'}) {
-    createpatterns_rpmmd($extrep, $projid, $xrepoid, $data, $patterntype{'rpm-md'});
-  } else {
-    deletepatterns_rpmmd($extrep, $projid, $xrepoid, $data);
-  }
-  if ($patterntype{'comps'}) {
-    createpatterns_comps($extrep, $projid, $xrepoid, $data, $patterntype{'comps'});
-  } else {
-    deletepatterns_comps($extrep, $projid, $xrepoid, $data);
-  }
-
-  # virt-builder repository
-  if (-e "$extrep/index") {
-    createrepo_virtbuilder($extrep, $projid, $xrepoid, $data);
-  }
+  createrepo($projid, $repoid, $data);
 
 publishprog_done:
   unlink("$uploaddir/publisher.$$") if @$signargs;
