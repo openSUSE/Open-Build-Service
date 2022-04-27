@@ -389,7 +389,7 @@ class BsRequestAction < ApplicationRecord
     source_project = Project.find_by_name(self.source_project)
     return unless source_project
 
-    if (source_project.packages.count == 1 && ::Configuration.cleanup_empty_projects) || !source_package
+    if (source_project.packages.count <= 1 && ::Configuration.cleanup_empty_projects) || !source_package
 
       # remove source project, if this is the only package and not a user's home project
       splits = self.source_project.split(':')
@@ -902,7 +902,7 @@ class BsRequestAction < ApplicationRecord
       raise NotSupported, "Source project #{source_project} is not a local project. This is not supported yet."
     end
 
-    if source_package
+    if source_package && source_package != '_project'
       spkg = Package.get_by_project_and_name(source_project, source_package, use_source: true, follow_project_links: true)
       spkg.check_weak_dependencies! if spkg && sourceupdate == 'cleanup'
     end
