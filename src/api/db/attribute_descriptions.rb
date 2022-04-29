@@ -30,7 +30,8 @@ def update_all_attrib_type_descriptions
     'AllowSubmitToMaintenanceRelease' => 'Allow submit requests to maintenance release projects',
     'EnforceRevisionsInRequests' => 'Enforce revisions in request actions',
     'CreatorCannotAcceptOwnRequests' => 'The creator and the accepter of a request cannot be the same person',
-    'SkipChannelBranch' => 'Opt-Out creating channels in maintenance incidents'
+    'SkipChannelBranch' => 'Opt-Out creating channels in maintenance incidents',
+    'LimitReleaseSourceProject' => 'Limit to listed project names as source for any release operation'
   }
   # rubocop:enable Layout/LineLength
 

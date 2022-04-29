@@ -143,4 +143,8 @@ OBS_EnforceRevisionsInRequests:
   value_count: 0
   attrib_namespace_id: 9
   issue_list: 0
-
+OBS_LimitReleaseSourceProject:
+  id: 85
+  name: LimitReleaseSourceProject
+  attrib_namespace_id: 9
+  issue_list: 0
