@@ -86,7 +86,7 @@ class UserLdapStrategy
 
       user_dn = ''
       user_memberof_attr = ''
-      ldap_con.search(CONFIG['ldap_search_base'], LDAP::LDAP_SCOPE_SUBTREE, filter) do |entry|
+      ldap_con.search(CONFIG['ldap_search_base'], LDAP::LDAP_SCOPE_SUBTREE, filter, [CONFIG['ldap_user_memberof_attr']]) do |entry|
         user_dn = entry.dn
         user_memberof_attr = entry.vals(CONFIG['ldap_user_memberof_attr']) if CONFIG['ldap_user_memberof_attr'].in?(entry.attrs)
       end
