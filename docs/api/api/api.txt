@@ -363,6 +363,17 @@ Parameters:
 XmlResult: status
 
 
+PUT /source/<project>/_attribute/<attribute>
+
+  Replaces all attributes attribute as in body
+
+Parameters:
+
+  comment: comment, optional
+
+XmlResult: status
+
+
 DELETE /source/<project>/_attribute/<attribute>
 
   Removes a specific attribute
@@ -579,6 +590,17 @@ GET /source/<project>/<package>/_attribute/<attribute>
   Get all attributes or a specific one
 
 XmlBody: attribute
+
+
+PUT /source/<project>/<package>/_attribute
+
+  Replaces all attributes as in body
+
+Parameters:
+
+  comment: comment, optional
+
+XmlResult: status
 
 
 POST /source/<project>/<package>/_attribute/<attribute>
