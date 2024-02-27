@@ -111,13 +111,6 @@ class Package < ApplicationRecord
   has_one :backend_package, foreign_key: :package_id, dependent: :destroy, inverse_of: :package # rubocop:disable Rails/RedundantForeignKey
   has_many :tokens, dependent: :destroy
 
-  def self.check_access?(package)
-    return false if package.nil?
-    return false unless package.instance_of?(Package)
-
-    Project.check_access?(package.project)
-  end
-
   def self.check_cache(project, package, opts)
     @key = { 'get_by_project_and_name' => 1, :package => package, :opts => opts }
 
@@ -217,7 +210,6 @@ class Package < ApplicationRecord
     end
 
     raise UnknownObjectError, "Package not found: #{project.name}/#{package_name}" unless package
-    raise ReadAccessError, "#{project.name}/#{package.name}" unless check_access?(package)
 
     package.check_source_access! if opts[:use_source]
 
@@ -271,10 +263,6 @@ class Package < ApplicationRecord
     return false if (disabled_for?('sourceaccess', nil, nil) || project.disabled_for?('sourceaccess', nil, nil)) && !User.possibly_nobody.can_source_access?(self)
 
     true
-  end
-
-  def check_access?
-    Project.check_access?(project)
   end
 
   def check_source_access!
