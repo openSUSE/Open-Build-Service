@@ -1,6 +1,6 @@
 RSpec.describe CommentsController do
   render_views
-  describe 'GET #show' do
+  describe 'GET #index' do
     let(:user) { create(:confirmed_user) }
 
     RSpec.shared_examples 'request comment index' do
@@ -137,6 +137,92 @@ RSpec.describe CommentsController do
 
       before do
         post :create, format: :xml, params: { request_number: bs_request.number, body: 'Something', parent_id: parent_comment.id }
+      end
+
+      it { expect(response).to have_http_status(:success) }
+    end
+  end
+
+  describe 'GET #show' do
+    let(:user) { create(:confirmed_user) }
+
+    RSpec.shared_examples 'request comment show' do
+      it { expect(response).to have_http_status(:success) }
+      it { expect(assigns(:comment)).to eq(comment) }
+
+      it {
+        expect(response.body.strip)
+          .to eq("<comment who=\"#{comment.user}\" when=\"#{comment.created_at}\" id=\"#{comment.id}\">#{comment.body}</comment>")
+      }
+    end
+
+    context 'of a project' do
+      let(:comment) { create(:comment_project) }
+
+      before do
+        login user
+        get :show, format: :xml, params: { id: comment.id }
+      end
+
+      include_examples 'request comment show'
+    end
+
+    context 'of a package' do
+      let(:comment) { create(:comment_package) }
+
+      before do
+        login user
+        get :show, format: :xml, params: { id: comment.id }
+      end
+
+      include_examples 'request comment show'
+    end
+
+    context 'of a bs_request' do
+      let(:comment) { create(:comment_request) }
+
+      before do
+        login user
+        get :show, format: :xml, params: { id: comment.id }
+      end
+
+      include_examples 'request comment show'
+    end
+  end
+
+  describe 'PUT #update' do
+    let(:user) { create(:confirmed_user) }
+    let(:new_comment_body) { 'new comment body' }
+
+    before do
+      login user
+    end
+
+    context 'of a project' do
+      let(:comment) { create(:comment_project, user: user) }
+
+      before do
+        put :update, format: :xml, params: { id: comment.id, body: new_comment_body }
+      end
+
+      it { expect(response).to have_http_status(:success) }
+    end
+
+    context 'of a package' do
+      let(:comment) { create(:comment_package, user: user) }
+
+      before do
+        put :update, format: :xml, params: { id: comment.id, body: new_comment_body }
+      end
+
+      it { expect(response).to have_http_status(:success) }
+    end
+
+    context 'of a bs_request' do
+      let(:comment) { create(:comment_request, user: user) }
+
+      before do
+        put :update, format: :xml, params: { id: comment.id, body: new_comment_body }
       end
 
       it { expect(response).to have_http_status(:success) }
