@@ -1,28 +1,31 @@
 class Workflow::Step::LinkPackageStep < Workflow::Step
   include ScmSyncEnabledStep
+  include TargetProjectLifeCycleSupport
 
-  REQUIRED_KEYS = [:source_project, :source_package, :target_project].freeze
+  REQUIRED_KEYS = %i[source_project source_package target_project].freeze
 
-  validate :validate_source_project_and_package_name
+  validate :validate_source_project_or_package_are_not_scmsynced
 
   def call
     return unless valid?
 
-    link_package
+    if scm_webhook.closed_merged_pull_request?
+      destroy_target_project
+    elsif scm_webhook.reopened_pull_request?
+      restore_target_project
+    elsif scm_webhook.new_commit_event?
+      create_target_package
+
+      Pundit.authorize(@token.executor, target_package, :update?)
+
+      create_link
+      Workflows::ScmEventSubscriptionCreator.new(token, workflow_run, scm_webhook, target_package).call
+
+      target_package
+    end
   end
 
   private
-
-  def link_package
-    create_target_package if webhook_event_for_linking_or_branching?
-
-    scm_synced? ? set_scmsync_on_target_package : add_branch_request_file(package: target_package)
-
-    # SCMs don't support statuses for tags, so we don't need to report back in this case
-    create_or_update_subscriptions(target_package) unless scm_webhook.tag_push_event?
-
-    target_package
-  end
 
   def target_project_base_name
     step_instructions[:target_project]
@@ -33,64 +36,45 @@ class Workflow::Step::LinkPackageStep < Workflow::Step
   end
 
   def create_target_package
-    create_project_and_package
-    return if scm_synced?
+    return if target_package.present?
 
-    create_project_services
-    create_link
-  end
-
-  def create_project_and_package
     check_source_access
-
-    raise PackageAlreadyExists, "Can not link package. The package #{target_package_name} already exists." if target_package.present?
 
     if target_project.nil?
       project = Project.new(name: target_project_name)
       Pundit.authorize(@token.executor, project, :create?)
 
-      project.save!
-      project.commit_user = User.session
-      project.relationships.create!(user: User.session, role: Role.find_by_title('maintainer'))
-      project.store
+      project.relationships.new(user: User.session, role: Role.find_by_title('maintainer'))
+      project.store(comment: 'SCM/CI integration, link_package step')
     end
 
-    Pundit.authorize(@token.executor, target_project, :update?)
-    target_project.packages.create(name: target_package_name)
+    package = target_project.packages.new(name: target_package_name)
+    Pundit.authorize(@token.executor, package, :create?)
+    package.save!
   end
 
   # Will raise an exception if the source package is not accesible
   def check_source_access
-    return if remote_source?
+    # if we branch from remote there is no need to check access. Either the package exists or not...
+    return if Project.find_remote_project(step_instructions[:source_project]).present?
 
-    Package.get_by_project_and_name(source_project_name, source_package_name)
-  end
-
-  # NOTE: the next lines are a temporary fix the allow the service to run in a linked package. A project service is needed.
-  def create_project_services
-    service_file = ProjectServiceFile.new(project_name: target_project)
-    service_file.save!({}, special_package_file_content)
-  end
-
-  def special_package_file_content
-    <<~XML
-      <services>
-        <service name="format_spec_file" mode="localonly"/>
-      </services>
-    XML
+    Package.get_by_project_and_name(step_instructions[:source_project], step_instructions[:source_package])
   end
 
   def create_link
     Backend::Api::Sources::Package.write_link(target_project_name,
                                               target_package_name,
                                               @token.executor,
-                                              link_xml(project: source_project_name, package: source_package_name))
-
-    target_package
+                                              link_xml(project: step_instructions[:source_project], package: step_instructions[:source_package]))
   end
 
   def link_xml(opts = {})
     # "<link package=\"foo\" project=\"bar\" />"
     Nokogiri::XML::Builder.new { |x| x.link(opts) }.doc.root.to_s
+  end
+
+  def validate_source_project_or_package_are_not_scmsynced
+    errors.add(:base, "project '#{step_instructions[:source_project]}' is developed in SCM. Branch it instead.") if scm_synced_project?
+    errors.add(:base, "package '#{step_instructions[:source_package]}' is developed in SCM. Branch it instead.") if scm_synced_package?
   end
 end

@@ -18,16 +18,15 @@
 @import 'bootstrap_variables/sizes';
 @import 'bootstrap_variables/options';
 @import 'bootstrap';
+@import 'colors';
 @import 'bootstrap-modal';
 @import 'font-awesome';
 @import 'tokenfield';
 @import 'links';
-@import 'sticky-footer';
 @import 'datatables';
 @import 'card-component';
 @import 'breadcrumbs-component';
 @import 'tabs';
-@import 'personal-navigation';
 @import 'kaminari';
 @import 'coderay';
 @import 'system-status';
@@ -74,7 +73,8 @@
 @import 'request_show_redesign/build_results';
 @import 'accordion-reviews-component';
 @import 'tokens';
-@import 'colors';
+@import 'subscriptions';
+@import 'mixin';
 
 html {
     overflow-y: scroll !important;

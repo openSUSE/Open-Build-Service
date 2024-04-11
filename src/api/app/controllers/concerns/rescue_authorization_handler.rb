@@ -10,7 +10,7 @@ module RescueAuthorizationHandler
           if redirect_path
             redirect_to(redirect_path)
           else
-            redirect_back(fallback_location: root_path)
+            redirect_back_or_to root_path
           end
         end
         format.json { render json: { errorcode: authorization_errorcode(exception), summary: authorization_message(exception) }, status: :forbidden }
@@ -19,6 +19,7 @@ module RescueAuthorizationHandler
         format.any do
           @errorcode = authorization_errorcode(exception)
           @summary = authorization_message(exception)
+          response.headers['X-Opensuse-Errorcode'] = @errorcode
           render template: 'status', status: :forbidden, formats: [:xml]
         end
       end
@@ -63,11 +64,10 @@ module RescueAuthorizationHandler
     def unauthorized_redirect_path(exception)
       case exception.reason
       when :anonymous_user
-        mode = CONFIG['proxy_auth_mode'] || :off
-        if mode == :off
-          new_session_path
-        else
+        if ::Configuration.proxy_auth_mode_enabled?
           root_path
+        else
+          new_session_path
         end
       end
     end

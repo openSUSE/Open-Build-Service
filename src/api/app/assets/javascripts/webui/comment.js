@@ -1,11 +1,9 @@
 function resizeTextarea(textarea) { // jshint ignore:line
-  var textLines = textarea.value.split('\n');
-  var neededRows = 1;
-  for (var x = 0; x < textLines.length; x++) {
-    if (textLines[x].length >= textarea.cols) neededRows += Math.floor(textLines[x].length / textarea.cols);
-  }
-  neededRows += textLines.length;
-  if (neededRows > textarea.rows) textarea.rows = neededRows;
+  var heightPerRow = Math.ceil(textarea.clientHeight / textarea.rows);
+  var linesOfText = Math.ceil(textarea.scrollHeight / heightPerRow);
+  var rowsToIncrease = linesOfText - textarea.rows;
+
+  textarea.rows += rowsToIncrease;
 }
 
 function updateCommentCounter(selector, count) {
@@ -19,13 +17,10 @@ function validateForm(e) {
   submitButton.prop('disabled', !$(e.target).val());
 }
 
-$(document).ready(function(){
+function handlingCommentEvents() {
   // Disable submit button if textarea is empty and enable otherwise
-  $('.comments-list,.comment_new,.timeline,.diff').on('keyup', '.comment-field', function(e) {
+  $('.comments-list,.comment_new,.timeline,.diff').on('input', '.comment-field', function(e) {
     validateForm(e);
-  });
-
-  $('.comments-list,.comment_new,.timeline,.diff').on('keyup click', '.comment-field', function() {
     resizeTextarea(this);
   });
 
@@ -64,6 +59,18 @@ $(document).ready(function(){
 
   // This is being used to update the comment with the updated content after an edit from the beta request show view
   $('.timeline,.diff').on('ajax:complete', '.put-comment-form', function(_, data) {
+    $(this).closest('.comments-thread').html(data.responseText);
+  });
+
+  // This is being used to update the comment with the updated content after a moderation from the legacy request view
+  $('.comments-list').on('ajax:complete', '.moderate-form', function(_, data) {
+    var $commentsList = $(this).closest('.comments-list');
+
+    $commentsList.html(data.responseText);
+  });
+
+  // This is being used to update the comment with the updated content after a moderation from the beta request show view
+  $('.timeline,.diff').on('ajax:complete', '.moderate-form', function(_, data) {
     $(this).closest('.comments-thread').html(data.responseText);
   });
 
@@ -109,28 +116,8 @@ $(document).ready(function(){
   $('body').on('click', '.cancel-comment', function (e) {
     $(e.target).closest('.collapse').collapse('hide');
   });
+}
 
-  // This is used to preview comments from the beta request show view: inside timeline thread (.timeline) and outside timeline (body)
-  // and also from the legacy request view (.comments-list): inside and outside the thread.
-  $('.comments-list, .timeline, body').on('click', '.preview-comment-tab:not(.active)', function (e) {
-      var commentContainer = $(e.target).closest('[class*="-comment-form"]');
-      var commentBody = commentContainer.find('.comment-field').val();
-      var commentPreview = commentContainer.find('.comment-preview');
-      if (commentBody) {
-        $.ajax({
-          method: 'POST',
-          url: commentContainer.data('previewCommentUrl'),
-          dataType: 'json',
-          data: { 'comment[body]': commentBody },
-          success: function(data) {
-            commentPreview.html(data.markdown);
-          },
-          error: function() {
-            commentPreview.html('Error loading markdown preview');
-          }
-        });
-      } else {
-        commentPreview.html('Nothing to preview');
-      }
-  });
+$(document).ready(function(){
+  handlingCommentEvents();
 });

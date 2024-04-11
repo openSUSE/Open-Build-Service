@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe Distribution do
   let(:admin) { create(:admin_user) }
   let(:distribution) { create(:distribution) }
@@ -36,10 +34,10 @@ RSpec.describe Distribution do
   end
 
   describe '.update_from_xmlhash' do
+    subject { distribution.update_from_xmlhash(xmlhash) }
+
     let(:distribution_id) { distribution.id }
     let(:xmlhash) { Xmlhash.parse(distribution_xml) }
-
-    subject { distribution.update_from_xmlhash(xmlhash) }
 
     it 'updates other attributes' do
       subject

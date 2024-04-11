@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe Webui::UsersController do
   let!(:user) { create(:confirmed_user, login: 'tom') }
   let!(:non_admin_user) { create(:confirmed_user, login: 'moi') }
@@ -207,7 +205,7 @@ RSpec.describe Webui::UsersController do
 
       it { expect(non_admin_user.realname).not_to eq('another real name') }
       it { expect(non_admin_user.email).not_to eq('new_valid@email.es') }
-      it { expect(flash[:error]).to eq("Can't edit #{non_admin_user.login}") }
+      it { expect(flash[:error]).to eq('Sorry, you are not authorized to update this user.') }
       it { is_expected.to redirect_to(root_url) }
     end
 
@@ -367,6 +365,35 @@ RSpec.describe Webui::UsersController do
         it { expect(user.email).to eq('new_valid@email.es') }
       end
     end
+
+    context 'for a moderator' do
+      let(:moderator) { create(:moderator) }
+
+      context 'blocking the ability of a user to create comments' do
+        before do
+          login(moderator)
+          post :update, params: { login: user.login, user: { blocked_from_commenting: 'true' } }
+          user.reload
+        end
+
+        it { expect(user.blocked_from_commenting).to be(true) }
+        it { expect(flash[:success]).to eq("User data for user '#{user.login}' successfully updated.") }
+      end
+
+      context 'passing parameters other than the blocked_from_commenting' do
+        before do
+          login(moderator)
+          post :update, params: { login: user.login, user: { blocked_from_commenting: 'true', email: 'foo@bar.baz' } }
+          user.reload
+        end
+
+        it 'leaves the other attributes untouched' do
+          expect(user.email).not_to eq('foo@bar.baz')
+          expect(user.blocked_from_commenting).to be(true)
+          expect(flash[:success]).to eq("User data for user '#{user.login}' successfully updated.")
+        end
+      end
+    end
   end
 
   describe 'GET #autocomplete' do
@@ -374,7 +401,7 @@ RSpec.describe Webui::UsersController do
 
     it 'returns user login' do
       get :autocomplete, params: { term: 'foo', format: :json }
-      expect(response.parsed_body).to match_array(['foobar'])
+      expect(response.parsed_body).to contain_exactly('foobar')
     end
   end
 
@@ -383,7 +410,7 @@ RSpec.describe Webui::UsersController do
 
     it 'returns user token as array of hash' do
       get :tokens, params: { q: 'foo', format: :json }
-      expect(response.parsed_body).to match_array([{ 'name' => 'foobaz' }])
+      expect(response.parsed_body).to contain_exactly({ 'name' => 'foobaz' })
     end
   end
 

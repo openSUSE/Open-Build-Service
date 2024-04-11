@@ -2,7 +2,7 @@
   content_for(:meta_title, @project.title.presence || @project)
   content_for(:meta_description, @project.description)
   @pagetitle = "Show #{@project}"
-  render partial: 'webui/project/show_actions', locals: { bugowners_mail: @bugowner_mail,
+  render partial: 'webui/project/show_actions', locals: { bugowners_mail: @bugowners_mail,
                                                           project: @project,
                                                           packages: @packages,
                                                           has_patchinfo: @has_patchinfo,
@@ -17,7 +17,12 @@
         = @project.title.presence || @project
       - if User.session
         .d-inline.ms-1#watchlist-icon-wrapper
-          = render WatchlistIconComponent.new(user: User.session!, project: @project, current_object: @project)
+          = render WatchlistIconComponent.new(user: User.session!,
+                                              project: @project,
+                                              current_object: @project,
+                                              bs_requests: @watched_requests,
+                                              packages: @watched_packages,
+                                              projects: @watched_projects)
     .row
       .col-md-8
         = render partial: 'basic_info', locals: { project: @project }
@@ -45,14 +50,14 @@
           %a.nav-link#packages-tab{ href: '#packages', role: 'tab', data: { 'bs-toggle': 'tab' },
           aria: { controls: 'packages', selected: 'false' } }
             Packages
-            %span.badge.bg-primary
+            %span.badge.text-bg-primary
               = @packages.length
         - if @inherited_packages.present?
           %li.nav-item
             %a.nav-link#inherited-packages-tab{ href: '#inherited-packages', role: 'tab', data: { 'bs-toggle': 'tab' },
             aria: { controls: 'inherited-packages', selected: 'false' } }
               Inherited Packages
-              %span.badge.bg-primary
+              %span.badge.text-bg-primary
                 = @inherited_packages.length
       .tab-content#packages-tabs-content
         .tab-pane.fade#packages{ role: 'tabpanel', aria: { labelledby: 'packages-tab' } }
@@ -63,7 +68,7 @@
     .card#comments-list
       %h5.card-header.text-word-break-all
         Comments
-        %span.badge.bg-primary{ id: "comment-counter-project-#{@project.id}" }
+        %span.badge.text-bg-primary{ id: "comment-counter-project-#{@project.id}" }
           = @comments.length
       .card-body#comments
         = render partial: 'webui/comment/show', locals: { commentable: @project,
@@ -80,6 +85,9 @@
                                                    options: { modal_title: 'Do you really want to remove this project?',
                                                               confirmation_text: "Please confirm deletion of the project '#{@project}'",
                                                               action: project_destroy_path(project: @project) })
+
+- if Flipper.enabled?(:content_moderation, User.possibly_nobody)
+  = render partial: 'webui/shared/report_modal'
 
 - content_for :ready_function do
   initializeDataTable('#inherited-packages-table');

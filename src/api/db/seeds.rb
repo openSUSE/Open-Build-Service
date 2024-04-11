@@ -3,19 +3,20 @@ require_relative 'attribute_descriptions'
 puts 'Seeding architectures table...'
 # NOTE: armvXel is actually obsolete (because it never exist as official platform),
 # but kept for compatibility reasons. armv7hl is in for compatibility (soft/hard).
-['aarch64', 'aarch64_ilp32', 'armv4l', 'armv5l', 'armv6l', 'armv7l', 'armv5el', 'armv6el', 'armv7el',
- 'armv7hl', 'armv8el', 'hppa', 'i586', 'i686', 'ia64', 'k1om', 'local', 'm68k', 'mips', 'mips32',
- 'mips64', 'ppc', 'ppc64', 'ppc64p7', 'ppc64le', 'riscv64', 's390', 's390x', 'sparc', 'sparc64', 'sparc64v',
- 'sparcv8', 'sparcv9', 'sparcv9v', 'x86_64'].each do |arch_name|
+%w[aarch64 aarch64_ilp32 armv4l armv5l armv6l armv7l armv5el armv6el armv7el
+   armv7hl armv8el hppa i586 i686 ia64 k1om local m68k mips mips32
+   mips64 ppc ppc64 ppc64p7 ppc64le riscv64 s390 s390x sparc sparc64 sparc64v
+   sparcv8 sparcv9 sparcv9v x86_64].each do |arch_name|
   Architecture.where(name: arch_name).first_or_create
 end
 # following our default config
-['armv7l', 'i586', 'x86_64'].each do |arch_name|
+%w[armv7l i586 x86_64].each do |arch_name|
   a = Architecture.find_by_name(arch_name)
   a.available = true
   a.save
 end
 
+puts 'Seeding configurations table...'
 # set default configuration settings if no settings exist
 Configuration.skip_callback(:save, :after, :delayed_write_to_backend)
 Configuration.first_or_create(name: 'private', title: 'Open Build Service') do |conf|
@@ -49,6 +50,7 @@ reviewer_role   = Role.where(title: 'reviewer').first_or_create
 downloader_role = Role.where(title: 'downloader').first_or_create
 reader_role     = Role.where(title: 'reader').first_or_create
 Role.where(title: 'Staff').first_or_create(global: true)
+Role.where(title: 'Moderator').first_or_create(global: true)
 
 puts 'Seeding users table...'
 admin = User.where(login: 'Admin').first_or_create(login: 'Admin', email: 'root@localhost',
@@ -64,25 +66,25 @@ puts 'Seeding roles_users table...'
 RolesUser.where(user_id: admin.id, role_id: admin_role.id).first_or_create
 
 puts 'Seeding static_permissions table...'
-['status_message_create', 'download_binaries', 'source_access', 'access',
- 'global_change_project', 'global_create_project', 'global_change_package', 'global_create_package',
- 'change_project', 'create_project', 'change_package', 'create_package'].each do |sp_title|
+%w[status_message_create download_binaries source_access access
+   global_change_project global_create_project global_change_package global_create_package
+   change_project create_project change_package create_package].each do |sp_title|
   StaticPermission.where(title: sp_title).first_or_create
 end
 
 puts 'Seeding static permissions for admin role in roles_static_permissions table...'
-StaticPermission.all.each do |sp|
+StaticPermission.find_each do |sp|
   admin_role.static_permissions << sp unless admin_role.static_permissions.find_by_id(sp.id)
 end
 
 puts 'Seeding static permissions for maintainer role in roles_static_permissions table...'
-['change_project', 'create_project', 'change_package', 'create_package'].each do |sp_title|
+%w[change_project create_project change_package create_package].each do |sp_title|
   sp = StaticPermission.find_by_title(sp_title)
   maintainer_role.static_permissions << sp unless maintainer_role.static_permissions.find_by_id(sp.id)
 end
 
 puts 'Seeding static permissions for reader role in roles_static_permissions table...'
-['access', 'source_access'].each do |sp_title|
+%w[access source_access].each do |sp_title|
   sp = StaticPermission.find_by_title(sp_title)
   reader_role.static_permissions << sp unless reader_role.static_permissions.find_by_id(sp.id)
 end
@@ -125,6 +127,8 @@ at = ans.attrib_types.where(name: 'ProjectStatusPackageFailComment').first_or_cr
 at.attrib_type_modifiable_bies.where(role_id: maintainer_role.id).first_or_create
 at = ans.attrib_types.where(name: 'BranchRepositoriesFromProject').first_or_create(value_count: 1)
 at.attrib_type_modifiable_bies.where(role_id: maintainer_role.id).first_or_create
+at = ans.attrib_types.where(name: 'BranchSkipRepositories').first_or_create
+at.attrib_type_modifiable_bies.where(role_id: maintainer_role.id).first_or_create
 at = ans.attrib_types.where(name: 'AutoCleanup').first_or_create(value_count: 1)
 at.attrib_type_modifiable_bies.where(role_id: maintainer_role.id).first_or_create
 
@@ -162,6 +166,11 @@ at.allowed_values << AttribAllowedValue.new(value: 'BugownerOnly')
 
 at = ans.attrib_types.where(name: 'CreatorCannotAcceptOwnRequests').first_or_create(value_count: 0)
 at.attrib_type_modifiable_bies.where(user_id: admin.id).first_or_create
+
+at = ans.attrib_types.where(name: 'EnforceRevisionsInRequests').first_or_create
+at.attrib_type_modifiable_bies.where(role_id: maintainer_role.id).first_or_create
+at = ans.attrib_types.where(name: 'PlannedReleaseDate').first_or_create(value_count: 1)
+at.attrib_type_modifiable_bies.where(role_id: maintainer_role.id).first_or_create
 
 update_all_attrib_type_descriptions
 
@@ -339,3 +348,8 @@ IssueTracker.where(name: 'gh').first_or_create(description: 'Generic Github Trac
                                                regex: '(?:gh|github)#([\w-]+\/[\w-]+#\d+)',
                                                url: 'https://www.github.com',
                                                label: 'gh#@@@', show_url: 'https://github.com/@@@')
+IssueTracker.where(name: 'svg').first_or_create(description: 'GNU Savannah bug tracker',
+                                                kind: 'other',
+                                                regex: 'svg#(\d+)',
+                                                url: 'https://savannah.gnu.org/bugs',
+                                                label: 'svg#@@@', show_url: 'https://savannah.gnu.org/bugs/?@@@')

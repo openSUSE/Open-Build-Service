@@ -1,6 +1,4 @@
-require 'rails_helper'
-
-RSpec.describe BsRequest, vcr: true do
+RSpec.describe BsRequest, :vcr do
   let(:user) { create(:confirmed_user, :with_home, login: 'tux') }
   let(:target_project) { create(:project, name: 'target_project') }
   let(:source_project) { create(:project, :as_submission_source, name: 'source_project') }
@@ -41,27 +39,26 @@ RSpec.describe BsRequest, vcr: true do
              source_package: source_package)
     end
     let(:doc) { Nokogiri::XML(review_request.to_axml, &:strict) }
+    let(:output) { BsRequest.new_from_xml(doc.to_xml) }
 
     context "'when' attribute provided" do
       let!(:updated_when) { 10.years.ago }
 
       before do
         doc.at_css('state')['when'] = updated_when
-        @output = BsRequest.new_from_xml(doc.to_xml)
       end
 
       # We don't care about milliseconds, therefore we parse to integer
-      it { expect(@output.updated_when.to_i).to eq(updated_when.to_i) }
+      it { expect(output.updated_when.to_i).to eq(updated_when.to_i) }
     end
 
     context "'when' attribute not provided" do
       before do
         doc.xpath('//@when').remove
-        @output = BsRequest.new_from_xml(doc.to_xml)
       end
 
       # We don't care about milliseconds, therefore we parse to integer
-      it { expect(@output.updated_when.to_i).to eq(@output.updated_at.to_i) }
+      it { expect(output.updated_when.to_i).to eq(output.updated_at.to_i) }
     end
   end
 
@@ -75,9 +72,9 @@ RSpec.describe BsRequest, vcr: true do
 
       before do
         login(reviewer)
-      end
 
-      subject! { request.assignreview(by_group: group.title, reviewer: reviewer.login) }
+        request.assignreview(by_group: group.title, reviewer: reviewer.login)
+      end
 
       it { expect(request.reviews.count).to eq(2) }
 
@@ -96,6 +93,8 @@ RSpec.describe BsRequest, vcr: true do
   end
 
   describe '#addreview' do
+    subject { Review.last }
+
     let(:reviewer) { create(:confirmed_user) }
     let(:history_element) { HistoryElement::RequestReviewAdded.last }
     let(:group) { create(:group) }
@@ -105,8 +104,6 @@ RSpec.describe BsRequest, vcr: true do
       login(reviewer)
       request.addreview(by_group: group.title)
     end
-
-    subject { Review.last }
 
     it { expect(subject.state).to eq(:new) }
     it { expect(subject.by_group).to eq(group.title) }
@@ -355,7 +352,7 @@ RSpec.describe BsRequest, vcr: true do
 
       it { expect(bs_request.staging_project).to be_present }
 
-      context 'when a staged bs_request is accepted', vcr: true do
+      context 'when a staged bs_request is accepted', :vcr do
         let(:backend_response) do
           <<~XML
             <revision rev="12" vrev="12">
@@ -377,84 +374,6 @@ RSpec.describe BsRequest, vcr: true do
         end
 
         it { expect(bs_request.staging_project).to be_nil }
-      end
-    end
-  end
-
-  describe '#update_cache' do
-    RSpec.shared_examples "the subject's cache is reset when it's request changes" do
-      before do
-        @cache_key = user.cache_key_with_version
-        request.state = :review
-        request.save
-        user.reload
-      end
-
-      it { expect(user.cache_key_with_version).not_to eq(@cache_key) }
-    end
-
-    context 'creator of bs_request' do
-      let!(:request) { create(:set_bugowner_request, creator: user) }
-      let(:user) { create(:admin_user) }
-
-      it_behaves_like "the subject's cache is reset when it's request changes"
-    end
-
-    context 'direct maintainer of a target_project' do
-      let(:target_project) { create(:project) }
-      let!(:request) do
-        create(:bs_request_with_submit_action,
-               target_project: target_project,
-               source_package: source_package)
-      end
-      let!(:relationship_project_user) { create(:relationship_project_user, project: target_project) }
-      let(:user) { relationship_project_user.user }
-
-      it_behaves_like "the subject's cache is reset when it's request changes"
-    end
-
-    context 'group maintainer of a target_project' do
-      let(:target_project) { create(:project) }
-
-      let!(:request) do
-        create(:bs_request_with_submit_action,
-               target_project: target_project,
-               source_package: source_package)
-      end
-
-      let(:relationship_project_group) { create(:relationship_project_group, project: target_project) }
-      let(:group) { relationship_project_group.group }
-      let!(:groups_user) { create(:groups_user, group: group) }
-      let(:user) { groups_user.user }
-
-      it_behaves_like "the subject's cache is reset when it's request changes" do
-        subject { user }
-      end
-      it_behaves_like "the subject's cache is reset when it's request changes" do
-        subject { group }
-      end
-    end
-
-    context 'direct maintainer of a target_package' do
-      let!(:request) { submit_request }
-      let!(:relationship_package_user) { create(:relationship_package_user, package: target_package) }
-      let(:user) { relationship_package_user.user }
-
-      it_behaves_like "the subject's cache is reset when it's request changes"
-    end
-
-    context 'group maintainer of a target_package' do
-      let!(:request) { submit_request }
-      let(:relationship_package_group) { create(:relationship_package_group, package: target_package) }
-      let(:group) { relationship_package_group.group }
-      let!(:groups_user) { create(:groups_user, group: group) }
-      let(:user) { groups_user.user }
-
-      it_behaves_like "the subject's cache is reset when it's request changes" do
-        subject { user }
-      end
-      it_behaves_like "the subject's cache is reset when it's request changes" do
-        subject { group }
       end
     end
   end
@@ -534,7 +453,7 @@ RSpec.describe BsRequest, vcr: true do
       request.update(accept_at: 1.hour.ago)
     end
 
-    describe '.delayed_auto_accept', vcr: true do
+    describe '.delayed_auto_accept', :vcr do
       subject! { BsRequest.delayed_auto_accept }
 
       it { is_expected.to contain_exactly(request) }
@@ -542,7 +461,7 @@ RSpec.describe BsRequest, vcr: true do
     end
 
     describe '#auto_accept' do
-      context 'when the request is pending', vcr: true do
+      context 'when the request is pending', :vcr do
         subject! { request.auto_accept }
 
         it { expect(request.reload).to have_attributes(state: :accepted, comment: 'Auto accept') }
@@ -559,7 +478,7 @@ RSpec.describe BsRequest, vcr: true do
         it { expect(request.reload).not_to have_attributes(state: :accepted, comment: 'Auto accept') }
       end
 
-      context "when creator doesn't have permissions for the target project", vcr: true do
+      context "when creator doesn't have permissions for the target project", :vcr do
         subject { request.auto_accept }
 
         before do
@@ -578,8 +497,8 @@ RSpec.describe BsRequest, vcr: true do
     let(:bs_request) { create(:add_maintainer_request, target_project: create(:project)) }
 
     before do
-      create(:bs_request_action_add_maintainer_role, bs_request: bs_request, target_project: create(:project))
       login(create(:admin_user))
+      create(:bs_request_action_add_maintainer_role, bs_request: bs_request, target_project: create(:project))
     end
 
     context 'when the bs request actions only have lower priorities' do
@@ -616,7 +535,7 @@ RSpec.describe BsRequest, vcr: true do
     end
   end
 
-  describe '#forward_to', vcr: true do
+  describe '#forward_to', :vcr do
     before do
       submit_request.bs_request_actions.first.update(sourceupdate: 'cleanup')
       login user
@@ -665,17 +584,17 @@ RSpec.describe BsRequest, vcr: true do
     end
 
     context 'with options' do
-      before do
-        login(user)
-        # For submit requests with 'sourceupdate' the user needs to be able to modify the (forwarded) source package
-        target_package.relationships.create(user: user, role: Role.find_by_title!('maintainer'))
-      end
-
       subject do
         submit_request.forward_to(
           project: user.home_project.name,
           options: { description: 'my description' }
         )
+      end
+
+      before do
+        login(user)
+        # For submit requests with 'sourceupdate' the user needs to be able to modify the (forwarded) source package
+        target_package.relationships.create(user: user, role: Role.find_by_title!('maintainer'))
       end
 
       it 'sets the given description' do
@@ -693,7 +612,7 @@ RSpec.describe BsRequest, vcr: true do
     include_context 'a BsRequest that has a project link'
 
     context 'via #new' do
-      context 'when sourceupdate is not set to cleanup', vcr: true do
+      context 'when sourceupdate is not set to cleanup', :vcr do
         include_context 'when sourceupdate is set to' do
           let(:sourceupdate_type) { 'cleanup' }
         end
@@ -701,7 +620,7 @@ RSpec.describe BsRequest, vcr: true do
         it { expect { subject.save! }.to raise_error BsRequestAction::LackingMaintainership }
       end
 
-      context 'when sourceupdate is not set to update', vcr: true do
+      context 'when sourceupdate is not set to update', :vcr do
         include_context 'when sourceupdate is set to' do
           let(:sourceupdate_type) { 'update' }
         end
@@ -709,7 +628,7 @@ RSpec.describe BsRequest, vcr: true do
         it { expect { subject.save! }.to raise_error BsRequestAction::LackingMaintainership }
       end
 
-      context 'when sourceupdate is set to noupdate', vcr: true do
+      context 'when sourceupdate is set to noupdate', :vcr do
         include_context 'when sourceupdate is set to' do
           let(:sourceupdate_type) { 'noupdate' }
         end
@@ -717,7 +636,7 @@ RSpec.describe BsRequest, vcr: true do
         it { expect { subject.save! }.not_to raise_error }
       end
 
-      context 'when sourceupdate is not set', vcr: true do
+      context 'when sourceupdate is not set', :vcr do
         include_context 'when sourceupdate is set to' do
           let(:sourceupdate_type) { nil }
         end
@@ -726,7 +645,7 @@ RSpec.describe BsRequest, vcr: true do
       end
     end
 
-    context 'via #new_from_xml', vcr: true do
+    context 'via #new_from_xml', :vcr do
       subject { BsRequest.new_from_xml(xml) }
 
       it { expect { subject.save! }.to raise_error BsRequestAction::LackingMaintainership }
@@ -762,11 +681,11 @@ RSpec.describe BsRequest, vcr: true do
   end
 
   describe '#as_json' do
+    subject { submit_request.as_json }
+
     before do
       submit_request.update(superseded_by: delete_request.id)
     end
-
-    subject { submit_request.as_json }
 
     it 'returns a json representation of a bs request' do
       expect(subject).to include(
@@ -787,7 +706,7 @@ RSpec.describe BsRequest, vcr: true do
     end
 
     context 'when called for a request with a subset of attributes' do
-      it { expect { BsRequest.all.select(:id).as_json }.not_to raise_error }
+      it { expect { BsRequest.select(:id).as_json }.not_to raise_error }
     end
   end
 

@@ -82,11 +82,12 @@ sub writexml {
 }
 
 sub writestr {
-  my ($fn, $fnf, $d) = @_;
+  my ($fn, $fnf) = @_;
   my $f;
   open($f, '>', $fn) || die("$fn: $!\n");
-  if (length($d)) {
-    (syswrite($f, $d) || 0) == length($d) || die("$fn write: $!\n");
+  my $l = length($_[2]);
+  if ($l) {
+    (syswrite($f, $_[2] || 0) == $l) || die("$fn write: $!\n");
   }
   do_fdatasync(fileno($f)) if defined($fnf) && $fdatasync_before_rename;
   close($f) || die("$fn close: $!\n");
@@ -126,20 +127,19 @@ sub readxml {
     return undef;
   }
   return XMLin($dtd, $d) unless $nonfatal;
-  eval { $d = XMLin($dtd, $d); };
+  $d = eval { XMLin($dtd, $d) };
   return $@ ? undef : $d;
 }
 
 sub fromxml {
-  my ($d, $dtd, $nonfatal) = @_;
-  return XMLin($dtd, $d) unless $nonfatal;
-  eval { $d = XMLin($dtd, $d); };
+  my (undef, $dtd, $nonfatal) = @_;
+  return XMLin($dtd, $_[0]) unless $nonfatal;
+  my $d = eval { XMLin($dtd, $_[0]) };
   return $@ ? undef : $d;
 }
 
 sub toxml {
-  my ($d, $dtd) = @_;
-  return XMLout($dtd, $d);
+  XMLout($_[1], $_[0]);
 }
 
 sub touch($) {
@@ -268,7 +268,9 @@ sub cleandir {
   my $ret = 1;
   return 1 unless -d $dir;
   for my $c (ls($dir)) {
-    if (! -l "$dir/$c" && -d _) {
+    my @s = lstat("$dir/$c");
+    if (! -l _ && -d _) {
+      chmod(0700, "$dir/$c") if ($s[2] & 0700) != 0700;	# set dirs to rxw
       cleandir("$dir/$c");
       $ret = undef unless rmdir("$dir/$c");
     } else {
@@ -606,8 +608,7 @@ sub tostorable {
 sub fromstorable {
   my $nonfatal = $_[1];
   return Storable::thaw(substr($_[0], 4)) unless $nonfatal;
-  my $d;
-  eval { $d = Storable::thaw(substr($_[0], 4)); };
+  my $d = eval { Storable::thaw(substr($_[0], 4)) };
   if ($@) {
     warn($@) if $nonfatal == 2;
     return undef;
@@ -622,6 +623,15 @@ sub ping {
     syswrite($f, 'x');
     close($f);
   }
+}
+
+sub openping {
+  my ($ping, $pingfile) = @_;
+  if (! -p $pingfile) {
+    POSIX::mkfifo($pingfile, 0666) || die("$pingfile: $!\n");
+  }
+  sysopen($ping, $pingfile, POSIX::O_RDWR) || die("$pingfile: $!\n");
+  $_[0] = $ping;	# support auto-vivify
 }
 
 sub drainping {
@@ -648,6 +658,14 @@ sub waitping {
   }
   fcntl($ping, F_SETFL, 0); 
   return $timeout > 0 ? 1 : 0;
+}
+
+sub openrunlock {
+  my ($lock, $runfile, $name) = @_;
+  open($lock, '>>', "$runfile.lock") || die("$runfile.lock: $!\n");
+  flock($lock, LOCK_EX | LOCK_NB) || die("$name is already running!\n");
+  utime undef, undef, "$runfile.lock";
+  $_[0] = $lock;	# support auto-vivify
 }
 
 sub restartexit {
@@ -900,10 +918,11 @@ FORMAT: "YYYY-MM-DD hh:mm:ss [$pid] $message"
 =cut
 
 sub printlog {
-  my ($msg, $level) = @_;
+  my ($msg, $level, $id) = @_;
   return if $level && !($debuglevel && $debuglevel >= $level);
+  $id ||= $$;
   $msg = "[debug $level] $msg" if $level;
-  printf "%s: %-7s %s\n", isotime(time), "[$$]", $msg;
+  printf "%s: %-7s %s\n", isotime(time), "[$id]", $msg;
 }
 
 sub setcritlogger {

@@ -23,14 +23,14 @@ FactoryBot.define do
 
     to_create do |user, evaluator|
       if evaluator.create_home_project
+        user.save!
+      else
         # rubocop:disable Rails/SkipsModelValidations
         # Avoid triggering the callbacks to propagate the change to the backend
-        Configuration.update_column(:allow_user_to_create_home_project, true)
-        user.save!
         Configuration.update_column(:allow_user_to_create_home_project, false)
-        # rubocop:enable Rails/SkipsModelValidations
-      else
         user.save!
+        Configuration.update_column(:allow_user_to_create_home_project, true)
+        # rubocop:enable Rails/SkipsModelValidations
       end
     end
 
@@ -43,6 +43,10 @@ FactoryBot.define do
 
       factory :staff_user do
         roles { [Role.find_by_title('Staff')] }
+      end
+
+      factory :moderator do
+        roles { [Role.find_by_title('Moderator')] }
       end
 
       factory :user_with_groups do

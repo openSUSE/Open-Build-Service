@@ -1,6 +1,6 @@
 require 'browser_helper'
 
-RSpec.describe 'Groups', js: true do
+RSpec.describe 'Groups', :js do
   let(:admin) { create(:admin_user, login: 'king') }
   let(:user_1) { create(:confirmed_user, login: 'eisendieter') }
   let!(:group_1) { create(:group, title: 'test_group', users: [admin, user_1]) }
@@ -57,7 +57,7 @@ RSpec.describe 'Groups', js: true do
   it 'remove a member from a group' do
     visit group_path(group_1)
 
-    within(find('#group-users > .card', text: admin.login)) do
+    within('#group-users > .card', text: admin.login) do
       click_link('Remove member from group')
     end
 
@@ -69,7 +69,7 @@ RSpec.describe 'Groups', js: true do
   it 'give maintainer rights to a group member' do
     visit group_path(group_1)
 
-    within(find('#group-users > .card', text: admin.login)) do
+    within('#group-users > .card', text: admin.login) do
       check('Maintainer')
     end
 

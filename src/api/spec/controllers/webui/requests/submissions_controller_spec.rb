@@ -1,6 +1,4 @@
-require 'rails_helper'
-
-RSpec.describe Webui::Requests::SubmissionsController, vcr: true do
+RSpec.describe Webui::Requests::SubmissionsController, :vcr do
   let(:user) { create(:confirmed_user, :with_home, login: 'tom') }
   let(:source_project) { user.home_project }
   let(:source_package) { create(:package_with_file, name: 'package_with_file', project: source_project) }
@@ -193,7 +191,7 @@ RSpec.describe Webui::Requests::SubmissionsController, vcr: true do
         }
       end
 
-      it { expect(flash[:error]).to eq("Unable to submit: The source of package #{source_project}/#{source_package} is broken") }
+      it { expect(flash[:error]).to eq("Unable to submit. The project '#{source_project}' was not found") }
       it { expect(response).to redirect_to(package_show_path(project: source_project, package: source_package)) }
       it { expect(BsRequestActionSubmit.where(target_project: target_project.name, target_package: source_package.name)).not_to exist }
     end

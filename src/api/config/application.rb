@@ -23,10 +23,10 @@ require 'rails/test_unit/railtie'
 gemfile_in = File.expand_path('../Gemfile.in', __dir__)
 if File.exist?(gemfile_in)
   require 'bundler_ext'
-  BundlerExt.system_require(gemfile_in, *Rails.groups(assets: ['development', 'test']))
+  BundlerExt.system_require(gemfile_in, *Rails.groups(assets: %w[development test]))
 else
   # Assets should be precompiled for production (so we don't need the gems loaded then)
-  Bundler.require(*Rails.groups(assets: ['development', 'test']))
+  Bundler.require(*Rails.groups(assets: %w[development test]))
 end
 
 require_relative '../lib/rabbitmq_bus'
@@ -109,6 +109,10 @@ module OBSApi
     config.active_record.cache_versioning = true
     config.active_record.collection_cache_versioning = false
 
+    # Disable partial writes to avoid causing incorrect values
+    # to be inserted when changing the default value of a column.
+    config.active_record.partial_inserts = false
+
     config.action_controller.action_on_unpermitted_parameters = :raise
 
     config.action_dispatch.rescue_responses['Backend::Error'] = 500
@@ -145,5 +149,8 @@ module OBSApi
     config.view_component.default_preview_layout = 'view_component_previews'
     # Below the preview, display a syntax highlighted source code example of the usage of the view component
     config.view_component.show_previews_source = true
+
+    # Classes required by YAML.safe_load used by paper_trail for loading date and time values
+    config.active_record.yaml_column_permitted_classes = [Date, Time, ActiveSupport::TimeWithZone, ActiveSupport::TimeZone]
   end
 end

@@ -1,6 +1,6 @@
 require 'browser_helper'
 
-RSpec.describe 'Patchinfo', js: true, vcr: true do
+RSpec.describe 'Patchinfo', :js, :vcr do
   let(:user) { create(:confirmed_user, :with_home, login: 'tom') }
   let(:project) { user.home_project }
 
@@ -38,7 +38,7 @@ RSpec.describe 'Patchinfo', js: true, vcr: true do
 
   describe 'delete Patchinfo' do
     let(:patchinfo_package) do
-      Patchinfo.new.create_patchinfo(user.home_project_name, nil) unless user.home_project.packages.exists?(name: 'patchinfo')
+      create(:patchinfo, project_name: user.home_project_name) unless user.home_project.packages.exists?(name: 'patchinfo')
       Package.get_by_project_and_name(user.home_project_name, 'patchinfo', use_source: false)
     end
 

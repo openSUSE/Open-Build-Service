@@ -55,8 +55,7 @@ class BsRequestActionDelete < BsRequestAction
     end
 
     if target_package
-      package = Package.get_by_project_and_name(target_project, target_package,
-                                                use_source: true, follow_project_links: false)
+      package = Package.get_by_project_and_name(target_project, target_package, follow_project_links: false)
       package.commit_opts = { comment: bs_request.description, request: bs_request }
       package.destroy
       Package.source_path(target_project, target_package)
@@ -78,6 +77,10 @@ class BsRequestActionDelete < BsRequestAction
     else
       "Delete #{target_project}"
     end
+  end
+
+  def short_name
+    name
   end
 
   private

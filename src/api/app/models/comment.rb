@@ -3,6 +3,7 @@ require 'set'
 class Comment < ApplicationRecord
   belongs_to :commentable, polymorphic: true # belongs to a Project, Package, BsRequest or BsRequestActionSubmit
   belongs_to :user, inverse_of: :comments
+  belongs_to :moderator, class_name: 'User', optional: true
 
   validates :body, presence: true
   # FIXME: this probably should be MEDIUMTEXT(16MB) instead of text (64KB)
@@ -13,16 +14,24 @@ class Comment < ApplicationRecord
 
   validate :validate_parent_id
 
+  validates_with CommentLockingValidator
+
   after_create :create_event
   after_destroy :delete_parent_if_unused
 
   has_many :children, dependent: :destroy, class_name: 'Comment', foreign_key: 'parent_id'
   has_many :notifications, as: :notifiable, dependent: :delete_all
+  has_many :reports, as: :reportable, dependent: :nullify
 
   extend ActsAsTree::TreeWalker
   acts_as_tree order: 'created_at'
 
+  has_paper_trail
+
+  scope :on_actions_for_request, ->(bs_request) { where(commentable: BsRequestAction.where(bs_request: bs_request)) }
   scope :without_parent, -> { where(parent_id: nil) }
+  scope :with_commentable, -> { where.not(commentable_id: nil) }
+  scope :newest_first, -> { order(created_at: :desc) }
 
   def to_s
     body
@@ -30,6 +39,7 @@ class Comment < ApplicationRecord
 
   def blank_or_destroy
     if children.exists?
+      self.paper_trail_event = 'delete'
       self.body = 'This comment has been deleted'
       self.user = User.find_nobody!
       save!
@@ -48,6 +58,23 @@ class Comment < ApplicationRecord
 
   def unused_parent?
     parent && parent.user.is_nobody? && parent.children.empty?
+  end
+
+  def moderated?
+    !!(moderated_at && moderator)
+  end
+
+  def moderate(state)
+    self.paper_trail_event = state ? 'moderate' : 'release'
+    self.moderated_at = state ? Time.zone.now : nil
+    self.moderator = state ? User.session : nil
+    save!
+  end
+
+  def body
+    return "*This content was considered problematic and has been moderated at #{moderated_at} by @#{moderator}*" if moderated?
+
+    super
   end
 
   private
@@ -101,20 +128,24 @@ end
 #  body             :text(65535)
 #  commentable_type :string(255)      indexed => [commentable_id]
 #  diff_ref         :string(255)
+#  moderated_at     :datetime
 #  created_at       :datetime
 #  updated_at       :datetime
 #  commentable_id   :integer          indexed => [commentable_type]
+#  moderator_id     :integer          indexed
 #  parent_id        :integer          indexed
 #  user_id          :integer          not null, indexed
 #
 # Indexes
 #
 #  index_comments_on_commentable_type_and_commentable_id  (commentable_type,commentable_id)
+#  moderated_comments_fk                                  (moderator_id)
 #  parent_id                                              (parent_id)
 #  user_id                                                (user_id)
 #
 # Foreign Keys
 #
-#  comments_ibfk_1  (user_id => users.id)
-#  comments_ibfk_4  (parent_id => comments.id)
+#  comments_ibfk_1        (user_id => users.id)
+#  comments_ibfk_4        (parent_id => comments.id)
+#  moderated_comments_fk  (moderator_id => users.id)
 #

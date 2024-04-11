@@ -167,8 +167,9 @@ sub prpfinished {
 
   my $seen_binary;
   my $singleexport;
-  $singleexport = $bconf->{'singleexport'} if $bconf;
-  $singleexport = 1 if $bconf && grep {$_ eq 'singleexport'} @{$bconf->{'repotype'} || []};
+  $singleexport = $bconf->{'singleexport'} if $bconf;						# obsolete
+  $singleexport = 1 if $bconf && grep {$_ eq 'singleexport'} @{$bconf->{'repotype'} || []};	# obsolete
+  $singleexport = 1 if $bconf && $bconf->{'publishflags:singleexport'};
   if ($singleexport) {
     print "    prp $prp is singleexport\n";
     $seen_binary = {};
@@ -312,6 +313,7 @@ sub prpfinished {
   for my $rbin (sort(ls($rdir))) {
     next if exists $origin{$rbin};
     next if $rbin eq '.newchecksums' || $rbin eq '.newchecksums.new' || $rbin eq '.checksums' || $rbin eq '.checksums.new';
+    next if ($rbin eq '.archsync' || $rbin eq '.archsync.new') && $bconf->{'publishflags:archsync'};
     print "      - :repo/$rbin\n";
     if (! -l "$rdir/$rbin" && -d _) {
       BSUtil::cleandir("$rdir/$rbin");
@@ -340,6 +342,14 @@ sub prpfinished {
       }
     }
     BSUtil::store("$rdir/.newchecksums.new", "$rdir/.newchecksums", \%newchecksums);
+  }
+
+  if ($bconf->{'publishflags:archsync'}) {
+    my $oldas = BSUtil::retrieve("$rdir/.archsync", 1) || {};
+    my $as = { 'lastcheck' => time(), 'lastchange' => $oldas->{'lastchange'} };
+    $as->{'lastchange'} = $as->{'lastcheck'} if $changed || !$as->{'lastchange'};
+    $changed = 1 if -e "$rdir/.archsync.new";	# hack, see bs_publish
+    BSUtil::store("$rdir/.archsync.new", "$rdir/.archsync", $as);
   }
 
   # release lock and ping publisher
@@ -598,6 +608,7 @@ sub publishdelta {
   return 0 unless @s && $s[7];          # zero size means skip it
   return 0 unless -s "$dst/$delta->[0].dseq";   # need dseq file
   my $deltaname = mkdeltaname($delta->[1], $bin);
+  return 0 if length("${rbin}::$deltaname") > 240;	# limit file name size
   my $deltaseqname = $deltaname;
   $deltaseqname =~ s/\.drpm$//;
   $deltaseqname .= '.dseq';

@@ -1,15 +1,15 @@
 class AddReviewDropdownComponent < ApplicationComponent
-  def initialize(bs_request:, user:, can_add_reviews:, my_open_reviews:)
+  def initialize(bs_request:, user:, my_open_reviews:, history_elements:)
     super
 
     @bs_request = bs_request
     @user = user
-    @can_add_reviews = can_add_reviews
     @my_open_reviews = my_open_reviews
+    @history_elements = history_elements
   end
 
   def render?
-    @can_add_reviews && @my_open_reviews.present?
+    policy(@bs_request).add_reviews? && @my_open_reviews.present?
   end
 
   def reviewer_icon_and_text(review:)
@@ -23,5 +23,11 @@ class AddReviewDropdownComponent < ApplicationComponent
     when review.by_project
       tag.i(nil, class: 'fa fa-cubes me-2') + "#{review.by_project}"
     end
+  end
+
+  def reason_when_review_was_requested(review:)
+    reason = @history_elements.reverse.find { |history_element| history_element.type == 'HistoryElement::RequestReviewAdded' && history_element.description_extension == review.id.to_s }&.comment
+
+    reason || ''
   end
 end

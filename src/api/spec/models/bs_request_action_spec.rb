@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe BsRequestAction do
   let(:user) { create(:confirmed_user, :with_home, login: 'request_user') }
 
@@ -7,7 +5,7 @@ RSpec.describe BsRequestAction do
     allow(User).to receive(:current).and_return(user)
   end
 
-  context 'encoding of sourcediffs', vcr: true do
+  context 'encoding of sourcediffs', :vcr do
     let(:file_content) { "-{\xA2:\xFA*\xA3q\u0010\xC2X\\\x9D" }
     let(:utf8_encoded_file_content) { file_content.encode('UTF-8', 'binary', invalid: :replace, undef: :replace) }
     let(:project) { user.home_project }
@@ -53,7 +51,7 @@ RSpec.describe BsRequestAction do
 
     it 'does not validate uniqueness for different types' do
       bs_request.bs_request_actions << build(:bs_request_action_add_bugowner_role)
-      expect { bs_request.send(:check_uniq_actions!) }.not_to raise_error(BsRequest::Errors::ConflictingActions)
+      expect { bs_request.send(:check_uniq_actions!) }.not_to raise_error
     end
   end
 
@@ -208,8 +206,7 @@ RSpec.describe BsRequestAction do
 
     context 'everything works as expected' do
       before do
-        allow(Backend::Api::BuildResults::Binaries).to receive(:files).and_return(binary_list)
-        allow(Backend::Api::BuildResults::Binaries).to receive(:history).and_return(build_history)
+        allow(Backend::Api::BuildResults::Binaries).to receive_messages(files: binary_list, history: build_history)
         allow(Directory).to receive(:hashed).and_return('srcmd5' => 'ef521827053c2e3b3cc735662c5d5bb0')
       end
 
@@ -224,10 +221,9 @@ RSpec.describe BsRequestAction do
       it { expect { bs_request_action.check_maintenance_release(source_pkg, repository, architecture) }.to raise_error(BsRequestAction::Errors::BuildNotFinished) }
     end
 
-    context 'last patchinfo is not build', vcr: true do
+    context 'last patchinfo is not build', :vcr do
       before do
-        allow(Backend::Api::BuildResults::Binaries).to receive(:files).and_return(binary_list)
-        allow(Backend::Api::BuildResults::Binaries).to receive(:history).and_return(build_history)
+        allow(Backend::Api::BuildResults::Binaries).to receive_messages(files: binary_list, history: build_history)
       end
 
       it { expect { bs_request_action.check_maintenance_release(source_pkg, repository, architecture) }.to raise_error(BsRequestAction::Errors::BuildNotFinished) }
@@ -237,8 +233,7 @@ RSpec.describe BsRequestAction do
   describe 'create_expand_package' do
     before do
       allow(User).to receive(:session!).and_return(user)
-      allow(Backend::Api::BuildResults::Binaries).to receive(:files).and_return(binary_list)
-      allow(Backend::Api::BuildResults::Binaries).to receive(:history).and_return(build_history)
+      allow(Backend::Api::BuildResults::Binaries).to receive_messages(files: binary_list, history: build_history)
       allow(Directory).to receive(:hashed).and_return(hashed)
     end
 
@@ -291,19 +286,18 @@ RSpec.describe BsRequestAction do
       it { expect { bs_request_action.create_expand_package(['foo']) }.to raise_error(BsRequestAction::RemoteSource) }
     end
 
-    context 'Everything should work', vcr: true do
+    context 'Everything should work', :vcr do
       it { expect { bs_request_action.create_expand_package([source_pkg]) }.not_to raise_error }
     end
 
-    context 'Should return an array', vcr: true do
+    context 'Should return an array', :vcr do
       it { expect(bs_request_action.create_expand_package([source_pkg])).to be_an(Array) }
     end
   end
 
-  describe 'check_expand_errors', vcr: true do
+  describe 'check_expand_errors', :vcr do
     let(:project) { user.home_project }
-    let(:attrib_type) { create(:obs_attrib_type, name: 'EnforceRevisionsInRequests') }
-    let(:attrib) { create(:attrib, attrib_type: attrib_type, project: project) }
+    let(:attrib) { create(:enforce_revisions_in_requests_attrib, project: project) }
 
     let(:target_package) do
       create(:package_with_file, name: 'tpackage', file_content: 'Hallo', project: project)
@@ -398,13 +392,13 @@ RSpec.describe BsRequestAction do
   end
 
   describe '#toggle_seen_by' do
-    let(:bs_request) { create(:bs_request_with_submit_action, creator: user) }
-    let(:bs_request_action) { bs_request.bs_request_actions.first }
-
     subject do
       bs_request_action.toggle_seen_by(user)
       bs_request_action.seen_by_users
     end
+
+    let(:bs_request) { create(:bs_request_with_submit_action, creator: user) }
+    let(:bs_request_action) { bs_request.bs_request_actions.first }
 
     context 'mark the action as seen by the user' do
       it 'adds the user to the seen_by_users association' do

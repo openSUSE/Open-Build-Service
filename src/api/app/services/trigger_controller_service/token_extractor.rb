@@ -33,7 +33,7 @@ module TriggerControllerService
 
     def extract_token_from_request_signature
       token = Token.find_by(id: @token_id)
-      return token if token && valid_signature?(token.string)
+      token if token && valid_signature?(token.string)
     end
 
     def valid_signature?(token_string)
@@ -43,7 +43,7 @@ module TriggerControllerService
     end
 
     def signature_of(token_string)
-      'sha256=' + OpenSSL::HMAC.hexdigest(OpenSSL::Digest.new('sha256'), token_string, @body)
+      "sha256=#{OpenSSL::HMAC.hexdigest(OpenSSL::Digest.new('sha256'), token_string, @body)}"
     end
 
     # To trigger the webhook, the sender needs to

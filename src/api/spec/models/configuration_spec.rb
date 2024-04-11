@@ -1,23 +1,7 @@
-require 'rails_helper'
-
 RSpec.describe Configuration do
   it { is_expected.to validate_presence_of(:name) }
   it { is_expected.to validate_presence_of(:title) }
   it { is_expected.to validate_presence_of(:description) }
-
-  it 'creates a new Configuration if no Configuration exists' do
-    Configuration.first.destroy
-    expect(Configuration.count).to eq(0)
-    Configuration.title
-    expect(Configuration.count).to eq(1)
-  end
-
-  it 'does not create a new Configuration if a Configuration exists' do
-    # The first configuration is created by db/seeds.rb
-    expect(Configuration.count).to eq(1)
-    Configuration.title
-    expect(Configuration.count).to eq(1)
-  end
 
   describe '#delayed_write_to_backend' do
     let(:configuration) { build(:configuration) }
@@ -25,9 +9,9 @@ RSpec.describe Configuration do
     before do
       allow(Configuration).to receive(:find).and_return(configuration)
       allow(configuration).to receive(:write_to_backend)
-    end
 
-    subject! { configuration.delayed_write_to_backend }
+      configuration.delayed_write_to_backend
+    end
 
     it 'writes to the backend' do
       expect(configuration).to have_received(:write_to_backend)
@@ -57,9 +41,14 @@ RSpec.describe Configuration do
     end
 
     context 'external authentication services' do
-      it 'returns false if config option `proxy_auth_mode` is set to :on' do
-        stub_const('CONFIG', CONFIG.merge('proxy_auth_mode' => :on))
-        expect(config.passwords_changable?).to be(false)
+      context 'in proxy auth mode' do
+        before do
+          stub_const('CONFIG', { proxy_auth_mode: :on, proxy_auth_login_page: '/', proxy_auth_logout_page: '/' }.with_indifferent_access)
+        end
+
+        it 'returns false if config option `proxy_auth_mode` is set to :on' do
+          expect(config.passwords_changable?).to be(false)
+        end
       end
 
       context 'in LDAP mode' do
@@ -95,11 +84,8 @@ RSpec.describe Configuration do
     let(:config) { Configuration.first }
 
     context 'proxy_auth_mode is enabled' do
-      before do
-        stub_const('CONFIG', CONFIG.merge('proxy_auth_mode' => :on))
-      end
-
       it 'returns false if proxy_auth_account_page is not present' do
+        stub_const('CONFIG', { proxy_auth_mode: :on, proxy_auth_login_page: '/', proxy_auth_logout_page: '/' }.with_indifferent_access)
         expect(config.accounts_editable?).to be(false)
       end
 

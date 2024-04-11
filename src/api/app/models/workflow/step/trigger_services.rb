@@ -2,11 +2,11 @@ class Workflow::Step::TriggerServices < Workflow::Step
   include Triggerable
   include Workflow::Step::Errors
 
-  REQUIRED_KEYS = [:project, :package].freeze
-
-  validate :validate_project_and_package_name
+  REQUIRED_KEYS = %i[project package].freeze
 
   def call
+    return if scm_webhook.closed_merged_pull_request? || scm_webhook.reopened_pull_request?
+
     @project_name = step_instructions[:project]
     @package_name = step_instructions[:package]
 
@@ -15,19 +15,21 @@ class Workflow::Step::TriggerServices < Workflow::Step
     set_object_to_authorize
     set_multibuild_flavor
 
-    Pundit.authorize(@token.executor, @token, :trigger_service?)
+    Pundit.authorize(@token.executor, @token.object_to_authorize, :update?)
 
     begin
       Backend::Api::Sources::Package.trigger_services(@project_name, @package_name, @token.executor.login, trigger_service_comment)
     rescue Backend::NotFoundError => e
       raise NoSourceServiceDefined, "Package #{@project_name}/#{@package_name} does not have a source service defined: #{e.summary}"
     end
+
+    Workflows::ScmEventSubscriptionCreator.new(token, workflow_run, scm_webhook, @package).call
   end
 
   private
 
   def package_find_options
-    { use_source: true, follow_project_links: false, follow_multibuild: false }
+    { follow_project_links: false }
   end
 
   # Examples of comments:

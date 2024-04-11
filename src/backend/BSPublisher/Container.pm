@@ -82,11 +82,12 @@ sub have_good_project_signkey {
 }
 
 sub get_notary_pubkey {
-  my ($projid, $pubkey, $signargs) = @_;
+  my ($projid, $pubkey, $signargs, $signflavor) = @_;
 
   my @signargs;
   push @signargs, '--project', $projid if $BSConfig::sign_project;
   push @signargs, '--signtype', 'notary' if $BSConfig::sign_type || $BSConfig::sign_type;
+  push @signargs, '--signflavor', $signflavor if $signflavor;
   push @signargs, @{$signargs || []};
 
   # ask the sign tool for the correct pubkey if we do not have a good sign key
@@ -106,7 +107,7 @@ sub get_notary_pubkey {
   my $pkalgo;
   eval { $pkalgo = BSPGP::pk2algo(BSPGP::unarmor($pubkey)) };
   if ($pkalgo && $pkalgo ne 'rsa') {
-    print "public key algorithm is '$pkalgo', skipping notary upload\n";
+    print "public key algorithm is '$pkalgo', skipping container signing and notary upload\n";
     return (undef, undef);
   }
   # get rid of --project option
@@ -170,14 +171,15 @@ sub cmp_containerinfo {
 =cut
 
 sub upload_all_containers {
-  my ($extrep, $projid, $repoid, $containers, $pubkey, $signargs, $multicontainer, $old_container_repositories) = @_;
+  my ($extrep, $projid, $repoid, $containers, $data, $old_container_repositories) = @_;
 
   my $isdelete;
   if (!defined($containers)) {
     $isdelete = 1;
     $containers = {};
   } else {
-    ($pubkey, $signargs) = get_notary_pubkey($projid, $pubkey, $signargs);
+    my ($pubkey, $signargs) = get_notary_pubkey($projid, $data->{'pubkey'}, $data->{'signargs'}, $data->{'signflavor'});
+    $data = { %$data, 'pubkey' => $pubkey, 'signargs' => $signargs };
   }
 
   my $notary_uploads = {};
@@ -198,7 +200,7 @@ sub upload_all_containers {
     for my $p (sort keys %$containers) {
       my $containerinfo = $containers->{$p};
       my $arch = $containerinfo->{'arch'};
-      my $goarch = $containerinfo->{'goarch'};
+      my $goarch = $containerinfo->{'goarch'} || (($containerinfo->{'type'} || '') eq 'helm' || ($containerinfo->{'type'} || '') eq 'artifacthub' ? 'any' : $arch);
       $goarch .= ":$containerinfo->{'govariant'}" if $containerinfo->{'govariant'};
       $goarch .= "_$containerinfo->{'goos'}" if $containerinfo->{'goos'} && $containerinfo->{'goos'} ne 'linux';
       my @tags = $mapper->($registry, $containerinfo, $projid, $repoid, $arch);
@@ -221,10 +223,10 @@ sub upload_all_containers {
 
       if ($registryserver eq 'local:') {
 	my $gunprefix = $registry->{'notary_gunprefix'} || $registry->{'server'};
-	$have_some_trust = 1 if defined($pubkey) && $gunprefix && $gunprefix ne 'local:';
-	do_local_uploads($registry, $projid, $repoid, $repository, $containers, $pubkey, $signargs, $multicontainer, $uptags);
+	$have_some_trust = 1 if defined($data->{'pubkey'}) && $gunprefix && $gunprefix ne 'local:';
+	do_local_uploads($registry, $projid, $repoid, $repository, $containers, $data, $uptags);
       } else {
-        do_remote_uploads($registry, $projid, $repoid, $repository, $containers, $pubkey, $signargs, $multicontainer, $uptags, $notary_uploads);
+        do_remote_uploads($registry, $projid, $repoid, $repository, $containers, $data, $uptags, $notary_uploads);
       }
 
       # add references
@@ -244,10 +246,10 @@ sub upload_all_containers {
     for my $repository (@{$old_container_repositories->{$regname} || []}) {
       next if $uploads{$repository};
       if ($registryserver eq 'local:') {
-        do_local_uploads($registry, $projid, $repoid, $repository, $containers, $pubkey, $signargs, $multicontainer, undef);
+        do_local_uploads($registry, $projid, $repoid, $repository, $containers, $data, undef);
 	next;
       } else {
-        do_remote_uploads($registry, $projid, $repoid, $repository, $containers, $pubkey, $signargs, $multicontainer, undef, $notary_uploads);
+        do_remote_uploads($registry, $projid, $repoid, $repository, $containers, $data, undef, $notary_uploads);
       }
     }
   }
@@ -256,25 +258,27 @@ sub upload_all_containers {
   # postprocessing: write readme, create links
   my %allrefs_pp;
   my %allrefs_pp_lastp;
+  my %helm_pp;
   for my $p (sort keys %$containers) {
     my $containerinfo = $containers->{$p};
     my $pp = $p;
-    $pp =~ s/.*?\/// if $multicontainer;
+    $pp =~ s/.*?\/// if $data->{'multiarch'};
     $allrefs_pp_lastp{$pp} = $p;	# for link creation
     push @{$allrefs_pp{$pp}}, @{$allrefs{$p} || []};	# collect all archs for the link
+    $helm_pp{$pp} = 1 if ($containerinfo->{'type'} || '') eq 'helm';
   }
   for my $pp (sort keys %allrefs_pp_lastp) {
     mkdir_p($extrep);
     unlink("$extrep/$pp.registry.txt");
     if (@{$allrefs_pp{$pp} || []}) {
-      unlink("$extrep/$pp");
+      unlink("$extrep/$pp") unless $helm_pp{$pp};
       # write readme file where to find the container
       my @r = sort(BSUtil::unify(@{$allrefs_pp{$pp}}));
       my $readme = "This container can be pulled via:\n";
       $readme .= "  docker pull $_\n" for @r;
       $readme .= "\nSet DOCKER_CONTENT_TRUST=1 to enable image tag verification.\n" if $have_some_trust;
       writestr("$extrep/$pp.registry.txt", undef, $readme);
-    } elsif ($multicontainer && $allrefs_pp_lastp{$pp} ne $pp) {
+    } elsif ($data->{'multiarch'} && $allrefs_pp_lastp{$pp} ne $pp) {
       # create symlink to last arch
       unlink("$extrep/$pp");
       symlink("$allrefs_pp_lastp{$pp}", "$extrep/$pp");
@@ -286,10 +290,10 @@ sub upload_all_containers {
     if ($isdelete) {
       delete_from_notary($projid, $notary_uploads);
     } else {
-      if (!defined($pubkey)) {
+      if (!defined($data->{'pubkey'})) {
 	print "skipping notary upload\n";
       } else {
-        upload_to_notary($projid, $notary_uploads, $signargs, $pubkey);
+        upload_to_notary($projid, $notary_uploads, $data);
       }
     }
   }
@@ -305,28 +309,31 @@ sub reconstruct_container {
   BSTar::writetarfile($dst, $dstfinal, $tar, 'mtime' => $mtime) if $tar;
 }
 
-sub create_container_dist_info {
-  my ($containerinfo, $oci, $platforms) = @_;
-  my $file = $containerinfo->{'publishfile'};
-  my ($tar, $mtime, $layer_compression);
-  if (!defined($file)) {
-    ($tar, $mtime, $layer_compression) = BSPublisher::Containerinfo::construct_container_tar($containerinfo, 1);
+sub open_container_tar {
+  my ($containerinfo, $file) = @_;
+  my ($tar, $mtime);
+  if (($containerinfo->{'type'} || '') eq 'artifacthub') {
+    ($tar, $mtime) = BSContar::container_from_artifacthub($containerinfo->{'artifacthubdata'});
+  } elsif (!defined($file)) {
+    ($tar, $mtime) = BSPublisher::Containerinfo::construct_container_tar($containerinfo, 1);
   } elsif (($containerinfo->{'type'} || '') eq 'helm') {
-    ($tar, $mtime, $layer_compression) = BSContar::container_from_helm($file, $containerinfo->{'config_json'}, $containerinfo->{'tags'});
+    ($tar, $mtime) = BSContar::container_from_helm($file, $containerinfo->{'config_json'}, $containerinfo->{'tags'});
   } elsif ($file =~ /\.tar$/) {
-    my $tarfd;
-    open($tarfd, '<', $file) || die("$file: $!\n");
-    $tar = BSTar::list($tarfd);
-    $_->{'file'} = $tarfd for @$tar;
+    ($tar, $mtime) = BSContar::open_container_tar($file);
   } else {
     my $tmpfile = decompress_container($file);
     my $tarfd;
     open($tarfd, '<', $tmpfile) || die("$tmpfile: $!\n");
     unlink($tmpfile);
-    $tar = BSTar::list($tarfd);
-    $_->{'file'} = $tarfd for @$tar;
+    ($tar, $mtime) = BSContar::open_container_tar($tarfd);
   }
   die("incomplete containerinfo\n") unless $tar;
+  return ($tar, $mtime);
+}
+
+sub create_container_dist_info {
+  my ($containerinfo, $oci, $platforms) = @_;
+  my ($tar, $mtime) = open_container_tar($containerinfo, $containerinfo->{'publishfile'});
   my %tar = map {$_->{'name'} => $_} @$tar;
   my ($manifest_ent, $manifest) = BSContar::get_manifest(\%tar);
   my ($config_ent, $config) = BSContar::get_config(\%tar, $manifest);
@@ -345,13 +352,11 @@ sub create_container_dist_info {
   my $config_data = BSContar::create_config_data($config_ent, $oci);
   my @layer_data;
   die("container has no layers\n") unless @{$manifest->{'Layers'} || []};
-  my @layer_comp = @{$layer_compression || []};
   for my $layer_file (@{$manifest->{'Layers'}}) {
     my $layer_ent = $tar{$layer_file};
     die("file $layer_file not included in tar\n") unless $layer_ent;
-    my $lcomp = shift @layer_comp;
-    ($layer_ent, $lcomp) = BSContar::normalize_layer($layer_ent, $oci, $lcomp);
-    my $layer_data = BSContar::create_layer_data($layer_ent, $oci, $lcomp);
+    $layer_ent = BSContar::normalize_layer($layer_ent, $oci);
+    my $layer_data = BSContar::create_layer_data($layer_ent, $oci);
     push @layer_data, $layer_data;
   }
   my $mani = BSContar::create_dist_manifest_data($config_data, \@layer_data, $oci);
@@ -379,7 +384,7 @@ sub create_container_index_info {
 }
 
 sub query_repostate {
-  my ($registry, $repository) = @_;
+  my ($registry, $repository, $tags) = @_;
   my $registryserver = $registry->{pushserver} || $registry->{server};
   my $pullserver = $registry->{server};
   $pullserver =~ s/https?:\/\///;
@@ -389,9 +394,21 @@ sub query_repostate {
   mkdir_p($uploaddir);
   my $tempfile = "$uploaddir/publisher.$$.repostate";
   unlink($tempfile);
-  print "querying state of $repository on $registryserver\n";
+  my $tagsfile;
+  if ($tags) {
+    return undef unless @$tags;
+    print "querying state of ".scalar(@$tags)." tags of $repository on $registryserver\n";
+    $tagsfile = "$uploaddir/publisher.$$.repotags";
+    my $digestdata = '';
+    $digestdata .= "sha256:0000000000000000000000000000000000000000000000000000000000000000 0 $_\n" for @$tags;
+    writestr($tagsfile, undef, $digestdata);
+  } else {
+    print "querying state of $repository on $registryserver\n";
+  }
   my @opts = ('-l');
+  push @opts, '--cosign' if $tags;
   push @opts, '--no-cosign-info' if $registry->{'cosign_nocheck'};
+  push @opts, '-F', $tagsfile if $tagsfile;
   my @cmd = ("$INC[0]/bs_regpush", '--dest-creds', '-', @opts, $registryserver, $repository);
   my $now = time();
   my $result = BSPublisher::Util::qsystem('echo', "$registry->{user}:$registry->{password}\n", 'stdout', $tempfile, @cmd);
@@ -411,6 +428,7 @@ sub query_repostate {
     close($fd);
     printf "query took %d seconds, found %d tags\n", time() - $now, scalar(keys %$repostate);
   }
+  unlink($tagsfile) if $tagsfile;
   unlink($tempfile);
   return $repostate;
 }
@@ -460,7 +478,8 @@ sub compare_to_repostate {
     for my $containerinfo (@$containerinfos) {
       $info = create_container_dist_info($containerinfo, $oci, \%platforms);
       $missing_manifestinfo = 1 if $manifestinfodir && ! -s "$manifestinfodir/$info->{'digest'}";
-      if ($cosigncookie && $cosign_attestation && ($containerinfo->{'slsa_provenance'} || $containerinfo->{'spdx_file'} ||  $containerinfo->{'cyclonedx_file'} )) {
+      my $attestation_layers = ($containerinfo->{'slsa_provenance'} ? 1 : 0) + ($containerinfo->{'spdx_file'} ? 1 : 0) + ($containerinfo->{'cyclonedx_file'} ? 1 : 0) + scalar(@{$containerinfo->{'intoto_files'} || []});
+      if ($cosigncookie && $cosign_attestation && $attestation_layers) {
 	my $atttag = $info->{'digest'};
 	$atttag =~ s/:(.*)/-$1.att/;
 	$expected{$atttag} = $cosign_expect;
@@ -478,7 +497,8 @@ sub compare_to_repostate {
     my $containerinfo = $containerinfos->[0];
     $info = create_container_dist_info($containerinfo, $oci);
     $missing_manifestinfo = 1 if $manifestinfodir && ! -s "$manifestinfodir/$info->{'digest'}";
-    if ($cosigncookie && $cosign_attestation && ($containerinfo->{'slsa_provenance'} || $containerinfo->{'spdx_file'} || $containerinfo->{'cyclonedx_file'})) {
+    my $attestation_layers = ($containerinfo->{'slsa_provenance'} ? 1 : 0) + ($containerinfo->{'spdx_file'} ? 1 : 0) + ($containerinfo->{'cyclonedx_file'} ? 1 : 0) + scalar(@{$containerinfo->{'intoto_files'} || []});
+    if ($cosigncookie && $cosign_attestation && $attestation_layers) {
       my $atttag = $info->{'digest'};
       $atttag =~ s/:(.*)/-$1.att/;
       $expected{$atttag} = $cosign_expect;
@@ -512,24 +532,30 @@ sub compare_to_repostate {
 =cut
 
 sub upload_to_registry {
-  my ($registry, $projid, $repoid, $repository, $containerinfos, $tags, $pubkey, $signargs, $multicontainer, $repostate) = @_;
+  my ($registry, $projid, $repoid, $repository, $containerinfos, $tags, $data, $repostate) = @_;
 
   return '' unless @{$containerinfos || []} && @{$tags || []};
   
+  my ($pubkey, $signargs) = ($data->{'pubkey'}, $data->{'signargs'});
   my $registryserver = $registry->{pushserver} || $registry->{server};
   my $pullserver = $registry->{server};
   $pullserver =~ s/https?:\/\///;
   $pullserver =~ s/\/?$/\//;
   $repository = "library/$repository" if $repository !~ /\// && $registry->{server} =~ /docker.io\/?$/ && $repository !~ /\//;
 
-  $multicontainer = 0;
-  my $multiarch = @$containerinfos > 1 || $multicontainer ? 1 : 0;
+  my $multiarch = 0;	# XXX: use $data->{'multiarch'}
+  $multiarch = 1 if @$containerinfos > 1;
   $multiarch = 0 if @$containerinfos == 1 && ($containerinfos->[0]->{'type'} || '') eq 'helm';
+  $multiarch = 0 if @$containerinfos == 1 && ($containerinfos->[0]->{'type'} || '') eq 'artifacthub';
   my $oci;
   for my $containerinfo (@$containerinfos) {
-    $oci = 1 if ($containerinfo->{'type'} || '') eq 'helm';
+    $oci = 1 if ($containerinfo->{'type'} || '') eq 'helm' || ($containerinfo->{'type'} || '') eq 'artifacthub';
     $oci = 1 if grep {$_ && $_ ne 'gzip'} @{$containerinfo->{'layer_compression'} || []};
   }
+
+  my $gun = $registry->{'notary_gunprefix'} || $registry->{'server'};
+  $gun =~ s/^https?:\/\///;
+  $gun .= "/$repository";
 
   my $cosign = $registry->{'cosign'};
   $cosign = $cosign->($repository, $projid) if $cosign && ref($cosign) eq 'CODE';
@@ -541,11 +567,8 @@ sub upload_to_registry {
   
   my $cosigncookie;
   if (defined($pubkey) && $cosign) {
-    my $gun = $registry->{'notary_gunprefix'} || $registry->{'server'};
-    $gun =~ s/^https?:\/\///;
-    $gun .= "/$repository";
     my $creator = 'OBS';
-    $cosigncookie = BSConSign::createcosigncookie($pubkey, $gun, $creator);
+    $cosigncookie = BSConSign::create_cosign_cookie($pubkey, $gun, $creator);
   }
 
   # check if the registry is up-to-date
@@ -564,12 +587,16 @@ sub upload_to_registry {
     my $file = $containerinfo->{'publishfile'};
     my $wrote_containerinfo;
     if (!defined($file)) {
+      if (($containerinfo->{'type'} || '') eq 'artifacthub') {
+	push @uploadfiles, "artifacthub:$containerinfo->{'artifacthubdata'}";
+	next;
+      }
       # tar file needs to be constructed from blobs
       $blobdir = $containerinfo->{'blobdir'};
       die("need a blobdir for containerinfo uploads\n") unless $blobdir;
       push @uploadfiles, "$blobdir/container.".scalar(@uploadfiles).".containerinfo";
       BSRepServer::Containerinfo::writecontainerinfo($uploadfiles[-1], undef, $containerinfo);
-      $wrote_containerinfo = 1;
+      $wrote_containerinfo = $uploadfiles[-1];
     } elsif ($file =~ /(.*)\.tgz$/ && ($containerinfo->{'type'} || '') eq 'helm') {
       my $helminfofile = "$1.helminfo";
       $blobdir = $containerinfo->{'blobdir'};
@@ -577,7 +604,7 @@ sub upload_to_registry {
       die("bad publishfile\n") unless $helminfofile =~ /^\Q$blobdir\E\//;	# just in case
       push @uploadfiles, $helminfofile;
       BSRepServer::Containerinfo::writecontainerinfo($uploadfiles[-1], undef, $containerinfo);
-      $wrote_containerinfo = 1;
+      $wrote_containerinfo = $uploadfiles[-1];
     } elsif ($file =~ /\.tar$/) {
       push @uploadfiles, $file;
     } else {
@@ -586,23 +613,33 @@ sub upload_to_registry {
       push @tempfiles, $tmpfile;
     }
     # copy provenance file into blobdir
-    if ($wrote_containerinfo && $containerinfo->{'slsa_provenance'} && $cosign_attestation) {
-      my $provenancefile = $uploadfiles[-1];
-      die unless $provenancefile =~ s/\.[^\.]+$/.slsa_provenance.json/;
-      writestr($provenancefile, undef, $containerinfo->{'slsa_provenance'});
-      $do_slsaprovenance = 1;
-    }
-    if ($wrote_containerinfo && $containerinfo->{'spdx_file'} && $cosign_attestation) {
-      my $spdx_file = $uploadfiles[-1];
-      die unless $spdx_file =~ s/\.[^\.]+$/.spdx.json/;
-      BSUtil::cp($containerinfo->{'spdx_file'}, $spdx_file) if $containerinfo->{'spdx_file'} ne $spdx_file;
-      $do_sbom = 1;
-    }
-    if ($wrote_containerinfo && $containerinfo->{'cyclonedx_file'} && $cosign_attestation) {
-      my $cyclonedx_file = $uploadfiles[-1];
-      die unless $cyclonedx_file =~ s/\.[^\.]+$/.cdx.json/;
-      BSUtil::cp($containerinfo->{'cyclonedx_file'}, $cyclonedx_file) if $containerinfo->{'cyclonedx_file'} ne $cyclonedx_file;
-      $do_sbom = 1;
+    if ($wrote_containerinfo && $cosign_attestation) {
+      if ($containerinfo->{'slsa_provenance'}) {
+	my $provenancefile = $wrote_containerinfo;
+	die unless $provenancefile =~ s/\.[^\.]+$/.slsa_provenance.json/;
+	writestr($provenancefile, undef, $containerinfo->{'slsa_provenance'});
+	$do_slsaprovenance = 1;
+      }
+      if ($containerinfo->{'spdx_file'}) {
+	my $spdx_file = $wrote_containerinfo;
+	die unless $spdx_file =~ s/\.[^\.]+$/.spdx.json/;
+	BSUtil::cp($containerinfo->{'spdx_file'}, $spdx_file) if $containerinfo->{'spdx_file'} ne $spdx_file;
+	$do_sbom = 1;
+      }
+      if ($containerinfo->{'cyclonedx_file'}) {
+	my $cyclonedx_file = $wrote_containerinfo;
+	die unless $cyclonedx_file =~ s/\.[^\.]+$/.cdx.json/;
+	BSUtil::cp($containerinfo->{'cyclonedx_file'}, $cyclonedx_file) if $containerinfo->{'cyclonedx_file'} ne $cyclonedx_file;
+	$do_sbom = 1;
+      }
+      my $nintoto = 0;
+      for my $intoto (@{$containerinfo->{'intoto_files'} || []}) {
+	my $intoto_file = $wrote_containerinfo;
+	die unless $intoto_file =~ s/\.[^\.]+$/.$nintoto.intoto.json/;
+	$nintoto++;
+	BSUtil::cp($intoto, $intoto_file) if $intoto ne $intoto_file;
+	$do_sbom = 1;
+      }
     }
   }
 
@@ -620,9 +657,6 @@ sub upload_to_registry {
   push @opts, '--oci' if $oci;
   push @opts, '-B', $blobdir if $blobdir;
   if ($cosigncookie) {
-    my $gun = $registry->{'notary_gunprefix'} || $registry->{'server'};
-    $gun =~ s/^https?:\/\///;
-    $gun .= "/$repository";
     my @signargs;
     push @signargs, '--project', $projid if $BSConfig::sign_project;
     push @signargs, @{$signargs || []};
@@ -646,6 +680,10 @@ sub upload_to_registry {
   unlink($containerdigestfile);
   unlink($_) for @tempfiles;
   die("error while uploading to registry: $result\n") if $result;
+
+  if ($data->{'notify'}) {
+    $data->{'notify'}->("$gun:$_") for @$tags;
+  }
 
   if ($uploadinfofile) {
     my $uploadinfo_json = readstr($uploadinfofile, 1);
@@ -710,8 +748,9 @@ sub add_notary_upload {
 =cut
 
 sub upload_to_notary {
-  my ($projid, $notary_uploads, $signargs, $pubkey) = @_;
+  my ($projid, $notary_uploads, $data) = @_;
 
+  my ($pubkey, $signargs) = ($data->{'pubkey'}, $data->{'signargs'});
   my @signargs;
   push @signargs, '--project', $projid if $BSConfig::sign_project;
   push @signargs, @{$signargs || []};
@@ -792,7 +831,8 @@ sub decompress_container {
 sub delete_container_repositories {
   my ($extrep, $projid, $repoid, $old_container_repositories) = @_;
   return unless $old_container_repositories;
-  upload_all_containers($extrep, $projid, $repoid, undef, undef, undef, 0, $old_container_repositories);
+  my $data = {};
+  upload_all_containers($extrep, $projid, $repoid, undef, $data, $old_container_repositories);
 }
 
 =head2 do_local_uploads - sync containers to a repository in a local registry
@@ -800,7 +840,7 @@ sub delete_container_repositories {
 =cut
 
 sub do_local_uploads {
-  my ($registry, $projid, $repoid, $repository, $containers, $pubkey, $signargs, $multicontainer, $uptags) = @_;
+  my ($registry, $projid, $repoid, $repository, $containers, $data, $uptags) = @_;
 
   my %todo;
   my @tempfiles;
@@ -824,8 +864,15 @@ sub do_local_uploads {
       push @{$todo{$tag}}, $containerinfo;
     }
   }
+  my $gun = $registry->{'notary_gunprefix'} || $registry->{'server'};
+  $gun =~ s/^https?:\/\///;
+  $gun = '' if $gun eq 'local:';
+  if (($data->{'artifacthubdata'} || {})->{"$gun/$repository"} && !$uptags->{'artifacthub.io'}) {
+    my $containerinfo = { 'type' => 'artifacthub', 'artifacthubdata' => $data->{'artifacthubdata'}->{"$gun/$repository"} };
+    push @{$todo{'artifacthub.io'}}, $containerinfo;
+  }
   eval {
-    BSPublisher::Registry::push_containers($registry, $projid, $repoid, $repository, \%todo, $pubkey, $signargs, $multicontainer);
+    BSPublisher::Registry::push_containers($registry, $projid, $repoid, $repository, \%todo, $data);
   };
   unlink($_) for @tempfiles;
   die($@) if $@;
@@ -836,7 +883,7 @@ sub do_local_uploads {
 =cut
 
 sub do_remote_uploads {
-  my ($registry, $projid, $repoid, $repository, $containers, $pubkey, $signargs, $multicontainer, $uptags, $notary_uploads) = @_;
+  my ($registry, $projid, $repoid, $repository, $containers, $data, $uptags, $notary_uploads) = @_;
 
   if (!$uptags) {
     my $containerdigests = '';
@@ -848,7 +895,8 @@ sub do_remote_uploads {
   my %todo;
   my %todo_p;
   for my $tag (sort keys %$uptags) {
-    my @p = sort(values %{$uptags->{$tag}});
+    my $uptag = $uptags->{$tag};
+    my @p = map {$uptag->{$_}} sort keys %$uptag;
     my $joinp = join('///', @p);
     push @{$todo{$joinp}}, $tag;
     $todo_p{$joinp} = \@p;
@@ -859,13 +907,23 @@ sub do_remote_uploads {
   $pullserver = '' if $pullserver =~ /docker.io\/$/;
   # query the current state
   my $repostate;
-  $repostate = eval { query_repostate($registry, $repository) } if 1;
+  my $querytags;
+  $querytags = [ sort keys %$uptags ] if $registry->{'nodelete'};
+  $repostate = eval { query_repostate($registry, $repository, $querytags) } if 1;
   # now do the uploads for the tag groups
   my $containerdigests = '';
   for my $joinp (sort keys %todo) {
     my @tags = @{$todo{$joinp}};
     my @containerinfos = map {$containers->{$_}} @{$todo_p{$joinp}};
-    my $digests = upload_to_registry($registry, $projid, $repoid, $repository, \@containerinfos, \@tags, $pubkey, $signargs, $multicontainer, $repostate);
+    my $digests = upload_to_registry($registry, $projid, $repoid, $repository, \@containerinfos, \@tags, $data, $repostate);
+    $containerdigests .= $digests;
+  }
+  my $gun = $registry->{'notary_gunprefix'} || $registry->{'server'};
+  $gun =~ s/^https?:\/\///;
+  $gun = '' if $gun eq 'local:';
+  if (($data->{'artifacthubdata'} || {})->{"$gun/$repository"} && !$uptags->{'artifacthub.io'}) {
+    my $containerinfo = { 'type' => 'artifacthub', 'artifacthubdata' => $data->{'artifacthubdata'}->{"$gun/$repository"} };
+    my $digests = upload_to_registry($registry, $projid, $repoid, $repository, [ $containerinfo ], [ 'artifacthub.io' ], $data, $repostate);
     $containerdigests .= $digests;
   }
   # all is pushed, now clean the rest

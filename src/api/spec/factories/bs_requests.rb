@@ -76,13 +76,12 @@ FactoryBot.define do
       next unless request.staging_project && evaluator.staging_owner
 
       evaluator.staging_owner.run_as do
-        request.bs_request_actions.where(type: :submit).each do |action|
-          BranchPackage.new(
-            project: action.source_project,
-            package: action.source_package,
-            target_project: request.staging_project.name,
-            target_package: action.target_package
-          ).branch
+        request.bs_request_actions.where(type: :submit).find_each do |action|
+          create(:branch_package,
+                 project: action.source_project,
+                 package: action.source_package,
+                 target_project: request.staging_project.name,
+                 target_package: action.target_package)
         end
       end
     end
@@ -161,12 +160,91 @@ FactoryBot.define do
       end
     end
 
-    factory :bs_request_with_maintenance_release_action do
+    factory :bs_request_with_maintenance_release_actions do
       type { :maintenance_release }
+
+      transient do
+        source_project_name { '' }
+        package_names { [] }
+        target_project_names { [] }
+      end
+
+      callback(:before_create) do |instance, evaluator|
+        actions = []
+        incident_project_id = evaluator.source_project_name.split(':').last
+
+        evaluator.creator.run_as do
+          evaluator.target_project_names.each do |target_project_name|
+            evaluator.package_names.each do |package_name|
+              actions << create(:bs_request_action_maintenance_release,
+                                bs_request: instance,
+                                source_project: evaluator.source_project_name,
+                                source_package: "#{package_name}.#{target_project_name.tr(':', '_')}", # i.e. 'cacti.openSUSE_Leap_15.4_Update'
+                                target_project: target_project_name,
+                                target_package: "#{package_name}.#{incident_project_id}")
+            end
+            actions << create(:bs_request_action_maintenance_release,
+                              bs_request: instance,
+                              source_project: evaluator.source_project_name,
+                              source_package: 'patchinfo',
+                              target_project: target_project_name,
+                              target_package: "patchinfo.#{incident_project_id}")
+          end
+        end
+
+        instance.bs_request_actions = actions if actions.present?
+      end
     end
 
-    factory :bs_request_with_maintenance_incident_action do
+    factory :bs_request_with_maintenance_incident_actions do
       type { :maintenance_incident }
+
+      transient do
+        source_project_name { '' }
+        source_package_names { [] }
+        target_project_name { '' }
+        target_releaseproject_names { [] }
+      end
+
+      callback(:before_create) do |instance, evaluator|
+        actions = []
+        evaluator.creator.run_as do
+          evaluator.source_package_names.each do |source_package_name|
+            evaluator.target_releaseproject_names.each do |target_releaseproject_name|
+              # TODO: find a better way to find out if the request comes from a branched project or and official project
+              # i.e. 'cacti.openSUSE_Leap_15.4_Update'
+              package_name = source_package_name
+              package_name += ".#{target_releaseproject_name.tr(':', '_')}" if evaluator.source_project_name.starts_with?('home:')
+              actions << create(:bs_request_action_maintenance_incident,
+                                bs_request: instance,
+                                source_project: evaluator.source_project_name,
+                                source_package: package_name,
+                                target_project: evaluator.target_project_name,
+                                target_releaseproject: target_releaseproject_name)
+            end
+          end
+        end
+        instance.bs_request_actions = actions if actions.present?
+      end
+
+      trait :with_patchinfo do
+        callback(:before_create) do |instance, evaluator|
+          instance.bs_request_actions << create(:bs_request_action_maintenance_incident,
+                                                bs_request: instance,
+                                                source_project: evaluator.source_project_name,
+                                                source_package: 'patchinfo',
+                                                target_project: evaluator.target_project_name)
+        end
+      end
+
+      trait :with_last_incident_accepted do
+        callback(:after_create) do |instance, _evaluator|
+          admin = User.get_default_admin
+          admin.run_as do
+            instance.change_state(newstate: 'accepted', force: true, user: admin.login, comment: 'Accepted by admin')
+          end
+        end
+      end
     end
 
     factory :superseded_bs_request, parent: :set_bugowner_request do

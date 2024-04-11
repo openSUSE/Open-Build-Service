@@ -64,7 +64,7 @@ gem 'gssapi', require: false
 # for sending events to rabbitmq
 gem 'bunny'
 # for making changes to existing data
-gem 'data_migrate'
+gem 'data_migrate', '~> 9.0'
 # for URI encoding
 gem 'addressable'
 # for XML builder
@@ -97,6 +97,11 @@ gem 'faraday'
 # Asset packaging system that concatenates and serves JavaScript, CoffeeScript, CSS, Sass, and SCSS
 # This cannot be in the assets group since Sprockets is loaded in config/application.rb
 gem 'sprockets-rails'
+# Javascript charts
+# https://github.com/ankane/chartkick
+gem 'chartkick'
+# For tracking changes in models
+gem 'paper_trail'
 
 # FIXME: Required by the mail gem
 # See https://github.com/rails/rails/pull/44083
@@ -118,8 +123,6 @@ group :development, :production do
   gem 'daemons'
   # as memcache client
   gem 'dalli'
-  # to document ruby code
-  gem 'rdoc'
   # to not rely on cron+rake
   gem 'clockwork'
   # as interface to LDAP
@@ -151,8 +154,6 @@ group :test do
   gem 'minitest-reporters'
   # for integration testing
   gem 'capybara'
-  # for rspec like matchers
-  gem 'capybara_minitest_spec'
   # to fake backend replies
   gem 'webmock'
   # for mocking and stubbing
@@ -181,7 +182,7 @@ group :development, :test do
   # for mocking the backend
   gem 'vcr'
   # as alternative to the standard IRB shell
-  gem 'pry'
+  gem 'pry', require: false
   # add step-by-step debugging and stack navigation capabilities to pry
   gem 'pry-byebug'
   # for style checks
@@ -191,9 +192,9 @@ group :development, :test do
   # for rspec style checks
   gem 'rubocop-rspec', require: false
   # for performance checks
-  gem 'rubocop-performance'
+  gem 'rubocop-performance', require: false
   # integrates with RuboCop to analyse HAML files
-  gem 'haml_lint'
+  gem 'haml_lint', require: false
   # to generate random long strings
   gem 'faker'
   # to launch browser in test
@@ -203,9 +204,9 @@ group :development, :test do
   # to find n+1 queries
   gem 'bullet'
   # Use Puma as the app server
-  gem 'puma'
+  gem 'puma', require: false
   # to drive headless chrome
-  gem 'selenium-webdriver'
+  gem 'selenium-webdriver', require: false
 end
 
 group :development do

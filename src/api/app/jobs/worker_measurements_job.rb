@@ -12,12 +12,13 @@ class WorkerMeasurementsJob < ApplicationJob
     send_worker_metrics
     send_job_metrics
     send_scheduler_metrics
+    send_daemon_metrics
   end
 
   private
 
   def send_worker_metrics
-    states = ['dead', 'down', 'away', 'idle', 'building']
+    states = %w[dead down away idle building]
     @architecture_names.each do |architecture_name|
       states.each do |state|
         state_elements = @workerstatus.xpath("//#{state}[@hostarch=\"#{architecture_name}\"]")
@@ -40,7 +41,7 @@ class WorkerMeasurementsJob < ApplicationJob
   end
 
   def send_scheduler_metrics
-    queues = ['high', 'med', 'low', 'next']
+    queues = %w[high med low next]
     @workerstatus.xpath('//partition//queue').each do |scheduler|
       partition = scheduler.parent.parent.values.first || 'main'
       architecture = scheduler.parent.attributes['arch'].value
@@ -48,6 +49,17 @@ class WorkerMeasurementsJob < ApplicationJob
         value = scheduler.attribute(queue).value.to_i
         RabbitmqBus.send_to_bus('metrics', "scheduler,arch=#{architecture},partition=#{partition},queue=#{queue} value=#{value}") if value.positive?
       end
+    end
+  end
+
+  def send_daemon_metrics
+    @workerstatus.xpath('//partition/daemon').each do |daemon|
+      partition = daemon.parent.values.first || 'main'
+      type = daemon.attributes['type'].value
+      state = daemon.attributes['state'].value
+      arch = daemon.attributes['arch']
+      arch = (arch.nil? ? '' : ",arch=#{arch.value}")
+      RabbitmqBus.send_to_bus('metrics', "backend_daemon_status,partition=#{partition},type=#{type},state=#{state}#{arch} count=1")
     end
   end
 end

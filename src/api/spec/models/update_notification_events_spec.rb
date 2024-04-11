@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe UpdateNotificationEvents do
   let!(:admin) { create(:admin_user, login: 'Admin') }
   let(:notifications) do
@@ -19,7 +17,7 @@ RSpec.describe UpdateNotificationEvents do
   end
 
   before do
-    url = CONFIG['source_url'] + '/lastnotifications?block=1&start=1'
+    url = "#{CONFIG['source_url']}/lastnotifications?block=1&start=1"
     stub_request(:get, url).and_return(body: notifications)
   end
 

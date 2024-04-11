@@ -8,6 +8,8 @@ use BSUtil;
 use BSVerify;
 use Build;
 
+use BSSolv;
+
 my $reporoot = "$BSConfig::bsdir/build";
 
 my @binsufs = qw{rpm deb pkg.tar.gz pkg.tar.xz pkg.tar.zst};
@@ -21,6 +23,41 @@ sub getconfig {
   my $bconf = Build::read_config($arch, [split("\n", $config)]);
   $bconf->{'binarytype'} ||= 'UNDEFINED';
   return $bconf;
+}
+
+my @setup_pool_with_repo_cache;
+
+sub setup_pool_with_repo {
+  my ($prp, $arch, $modules) = @_;
+  my $dir = "$reporoot/$prp/$arch/:full";
+  
+  if ($BSStdServer::isajax) {
+    my @s = stat("$dir.solv");
+    if (@s && $s[7] >= 65536) {
+      my $cachekey = "$s[9]/$s[7]/$s[1]/$prp/$arch/".join('/', @{$modules || []});
+      for my $idx (0..7) {
+	if (($setup_pool_with_repo_cache[$idx][0] || '') eq $cachekey) {
+	  print "setup_pool_with_repo cache hit for $cachekey at index $idx\n";
+	  unshift @setup_pool_with_repo_cache, splice(@setup_pool_with_repo_cache, $idx, 1) if $idx;
+	  return $setup_pool_with_repo_cache[0][1], $setup_pool_with_repo_cache[0][2];
+	}
+      }
+      print "setup_pool_with_repo cache miss for $cachekey\n";
+      my $pool = BSSolv::pool->new();
+      $pool->setmodules($modules || []) if defined &BSSolv::pool::setmodules;
+      my $repo = eval { $pool->repofromfile($prp, "$dir.solv") };
+      my @s2 = stat("$dir.solv");
+      if ($repo && @s2 && "$s2[9]/$s2[7]/$s2[1]" eq "$s[9]/$s[7]/$s[1]") {
+        pop @setup_pool_with_repo_cache;
+        unshift @setup_pool_with_repo_cache, [$cachekey, $pool, $repo];
+        return $pool, $repo;
+      }
+    }
+  }
+  my $pool = BSSolv::pool->new();
+  $pool->setmodules($modules || []) if defined &BSSolv::pool::setmodules;
+  my $repo = BSRepServer::addrepo_scan($pool, $prp, $arch);
+  return ($pool, $repo);
 }
 
 sub addrepo_scan {
@@ -93,6 +130,8 @@ sub read_bininfo {
   # .bininfo not present or old style, generate it
   $bininfo = {};
   for my $file (ls($dir)) {
+    $bininfo->{'.nosourceaccess'} = {} if $file eq '.nosourceaccess';
+    $bininfo->{'.nouseforbuild'} = {} if $file eq '.channelinfo' || $file eq 'updateinfo.xml';
     if ($file =~ /\.(?:$binsufsre)$/) {
       my @s = stat("$dir/$file");
       my $r = {};
@@ -117,7 +156,7 @@ sub read_bininfo {
       my $r = {%$d, 'filename' => $file, 'id' => "$s[9]/$s[7]/$s[1]"};
       delete $r->{'path'};
       $bininfo->{$file} = $r;
-    } elsif ($file =~ /[-.]appdata\.xml$/ || $file eq '_modulemd.yaml' || $file =~ /slsa_provenance\.json$/) {
+    } elsif ($file =~ /[-.]appdata\.xml$/ || $file eq '_modulemd.yaml' || $file =~ /slsa_provenance\.json$/ || $file eq 'updateinfo.xml') {
       local *F;
       open(F, '<', "$dir/$file") || next;
       my @s = stat(F);
@@ -126,10 +165,6 @@ sub read_bininfo {
       $ctx->addfile(*F);
       close F;
       $bininfo->{$file} = {'md5sum' => $ctx->hexdigest(), 'filename' => $file, 'id' => "$s[9]/$s[7]/$s[1]"};
-    } elsif ($file eq '.nosourceaccess') {
-      $bininfo->{'.nosourceaccess'} = {};
-    } elsif ($file eq '.channelinfo' || $file eq 'updateinfo.xml') {
-      $bininfo->{'.nouseforbuild'} = {};
     }
   }
   return $bininfo;

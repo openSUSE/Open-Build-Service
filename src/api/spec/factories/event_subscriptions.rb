@@ -77,5 +77,78 @@ FactoryBot.define do
       user
       group { nil }
     end
+
+    # TODO: Remove `Event::CreateReport` after all existing records are migrated to the new STI classes
+    factory :event_subscription_create_report do
+      eventtype { 'Event::CreateReport' }
+      receiver_role { 'moderator' }
+      channel { :instant_email }
+      user
+      group { nil }
+    end
+
+    factory :event_subscription_report_for_project do
+      eventtype { 'Event::ReportForProject' }
+      receiver_role { 'moderator' }
+      channel { :instant_email }
+      user
+      group { nil }
+    end
+
+    factory :event_subscription_report_for_package do
+      eventtype { 'Event::ReportForPackage' }
+      receiver_role { 'moderator' }
+      channel { :instant_email }
+      user
+      group { nil }
+    end
+
+    factory :event_subscription_report_for_comment do
+      eventtype { 'Event::ReportForComment' }
+      receiver_role { 'moderator' }
+      channel { :instant_email }
+      user
+      group { nil }
+    end
+
+    factory :event_subscription_report_for_user do
+      eventtype { 'Event::ReportForUser' }
+      receiver_role { 'moderator' }
+      channel { :instant_email }
+      user
+      group { nil }
+    end
+
+    factory :event_subscription_cleared_decision do
+      eventtype { 'Event::ClearedDecision' }
+      receiver_role { 'reporter' }
+      channel { :instant_email }
+      user
+      group { nil }
+    end
+
+    factory :event_subscription_favored_decision do
+      eventtype { 'Event::FavoredDecision' }
+      receiver_role { 'reporter' } # or 'offender'
+      channel { :instant_email }
+      user
+      group { nil }
+    end
+
+    factory :event_subscription_appeal_created do
+      eventtype { 'Event::AppealCreated' }
+      receiver_role { 'moderator' }
+      channel { :instant_email }
+      user
+      group { nil }
+    end
+
+    factory :event_subscription_workflow_run_fail do
+      eventtype { 'Event::WorkflowRunFail' }
+      receiver_role { 'token_executor' }
+      channel { :instant_email }
+      user
+      group { nil }
+    end
   end
 end

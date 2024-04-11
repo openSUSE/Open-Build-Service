@@ -101,21 +101,15 @@ sub check {
   my $incycle = $ctx->{'incycle'};
   my @blocked = grep {$notready->{$dep2src->{$_}}} @$edeps;
   @blocked = () if $repo->{'block'} && $repo->{'block'} eq 'never';
-  # check if cycle builds are in progress
-  if ($incycle && $incycle == 3) {
-    push @blocked, 'cycle' unless @blocked;
-    if ($ctx->{'verbose'}) {
-      print "      - $packid ($buildtype)\n";
-      print "        blocked by cycle builds ($blocked[0]...)\n";
-    }
-    splice(@blocked, 10, scalar(@blocked), '...') if @blocked > 10;
-    return ('blocked', join(', ', @blocked));
-  }
   # prune cycle packages from blocked
-  if ($incycle) {
+  if ($incycle > 1) {
+    my $cyclevel = $ctx->{'cyclevel'};
     my $pkg2src = $ctx->{'pkg2src'} || {};
-    my %cycs = map {($pkg2src->{$_} || $_) => 1} @{$ctx->{'cychash'}->{$packid}};
-    @blocked = grep {!$cycs{$dep2src->{$_}}} @blocked;
+    my $level = $cyclevel->{$packid};
+    if ($level) {
+      my %cycs = map {($pkg2src->{$_} || $_) => ($cyclevel->{$_} || 1)} @{$ctx->{'cychash'}->{$packid}};
+      @blocked = grep {($cycs{$dep2src->{$_}} || 0) < $level} @blocked;
+    }
   }
   if (@blocked) {
     # print "      - $packid ($buildtype)\n";
@@ -123,6 +117,7 @@ sub check {
     splice(@blocked, 10, scalar(@blocked), '...') if @blocked > 10;
     return ('blocked', join(', ', @blocked));
   }
+
   # expand host deps
   my $hdeps;
   if ($ctx->{'conf_host'}) {
@@ -201,11 +196,6 @@ sub check {
       goto relsynccheck;
     }
     # more work, check if dep rpm changed
-    if ($incycle == 1) {
-      # print "      - $packid ($buildtype)\n";
-      # print "        in cycle, no source change...\n";
-      return ('done');
-    }
     my $check = substr($mylastcheck, 32, 32);	# metamd5
     my $pool = $ctx->{'pool'};
     my $pool_host = $ctx->{'pool_host'};
@@ -296,6 +286,21 @@ sub check {
       close F;
       chomp @meta;
     }
+    if ($incycle == 1) {
+      # calculate cyclevel
+      my $level;
+      if (defined &BSSolv::diffdepth_meta) {
+	$level = BSSolv::diffdepth_meta(\@new_meta, \@meta);
+      } else {
+        $level = BSBuild::diffdepth(\@new_meta, \@meta);
+      }
+      $ctx->{'cyclevel'}->{$packid} = $level;
+      if ($level > 1) {
+        # print "      - $packid ($buildtype)\n";
+        # print "        in cycle, no source change...\n";
+        return ('done');	# postpone till phase 2
+      }
+    }
     if ($rebuildmethod eq 'direct') {
       @meta = grep {!/\//} @meta;
       @new_meta = grep {!/\//} @new_meta;
@@ -314,10 +319,11 @@ sub check {
     }
     my @diff = BSSched::BuildJob::diffsortedmd5(\@meta, \@new_meta);
     my $reason = BSSched::BuildJob::sortedmd5toreason(@diff);
+    my $levelstr = $ctx->{'cyclevel'}->{$packid} ? " (cyclevel $ctx->{'cyclevel'}->{$packid})" : '';
     if ($ctx->{'verbose'}) {
       print "      - $packid ($buildtype)\n";
       print "        $_\n" for @diff;
-      print "        meta change, start build\n";
+      print "        meta change, start build$levelstr\n";
     }
     return ('scheduled', [ { 'explain' => 'meta change', 'packagechange' => $reason }, $hdeps ] );
   }
@@ -357,12 +363,12 @@ sub build {
   my $subpacks = $ctx->{'subpacks'}->{$info->{'name'}} || [];
   my $edeps = $info->{'edeps'} || $ctx->{'edeps'}->{$packid} || [];
 
+  my $nounchanged;
+  #$nounchanged = 1 if $packid && $ctx->{'cychash'}->{$packid} && !$ctx->{'forcebinaryidmeta'};
+
   if ($ctx->{'conf_host'}) {
+    # add all sysdeps as extrabdeps
     my $dobuildinfo = $ctx->{'dobuildinfo'};
-    my $xp = BSSolv::expander->new($ctx->{'pool_host'}, $ctx->{'conf_host'});
-    no warnings 'redefine';
-    local *Build::expand = sub { $_[0] = $xp; goto &BSSolv::expander::expand; };
-    use warnings 'redefine';
     my @bdeps;
     for (@$edeps) {
       my $bdep = {'name' => $_, 'sysroot' => 1};
@@ -378,20 +384,33 @@ sub build {
       }
       push @bdeps, $bdep;
     }
+
+    # limit build dependencies to host dependencies
+    my $split_hostdeps = $info->{'split_hostdeps'};
+    $split_hostdeps ||= ($ctx->{'split_hostdeps'} || {})->{$packid} if $packid;
+    return ('broken', 'missing split_hostdeps entry') unless $split_hostdeps;
+    $info = { %$info, 'dep' => [ @{$split_hostdeps->[1]}, @{$split_hostdeps->[2] || []} ] };
+
+    # create the job
+    my $xp = BSSolv::expander->new($ctx->{'pool_host'}, $ctx->{'conf_host'});
+    no warnings 'redefine';
+    local *Build::expand = sub { $_[0] = $xp; goto &BSSolv::expander::expand; };
+    use warnings 'redefine';
     $ctx = bless { %$ctx, 'conf' => $ctx->{'conf_host'}, 'pool' => $ctx->{'pool_host'}, 'dep2pkg' => $ctx->{'dep2pkg_host'}, 'realctx' => $ctx, 'expander' => $xp, 'crossmode' => 1}, ref($ctx);
     $ctx->{'extrabdeps'} = \@bdeps;
-    $info->{'nounchanged'} = 1 if $packid && $ctx->{'cychash'}->{$packid};
-    my ($state, $job) = BSSched::BuildJob::create($ctx, $packid, $pdata, $info, $subpacks, $hdeps, $reason, $needed);
+    $info->{'nounchanged'} = 1 if $nounchanged;
+    my ($state, $job) = BSSched::BuildJob::create($ctx, $packid, $pdata, $info, $subpacks, $hdeps || [], $reason, $needed);
     delete $info->{'nounchanged'};
     return ($state, $job);
   }
 
-  $info->{'nounchanged'} = 1 if $packid && $ctx->{'cychash'}->{$packid} && !$ctx->{'forcebinaryidmeta'};
+  $info->{'nounchanged'} = 1 if $nounchanged;
   my ($state, $job) = BSSched::BuildJob::create($ctx, $packid, $pdata, $info, $subpacks, $edeps, $reason, $needed);
   delete $info->{'nounchanged'};
   return ($state, $job);
 }
 
+# split dependencies into (\@sysroot, \@native)
 sub split_hostdeps {
   my ($bconf, $info) = @_;
   my $dep = $info->{'dep'} || [];

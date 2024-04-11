@@ -1,6 +1,6 @@
 require 'browser_helper'
 
-RSpec.describe 'Request with change devel actions', beta: true, vcr: true do
+RSpec.describe 'Request with change devel actions', :beta, :vcr do
   let(:submitter) { create(:confirmed_user, login: 'submitter') }
   let(:base_package) { create(:package) }
   let(:future_devel_package) { create(:package, name: base_package.name) }
@@ -20,7 +20,7 @@ RSpec.describe 'Request with change devel actions', beta: true, vcr: true do
 
     it 'displays the description but does not mentions the previous devel package' do
       expect(page).to have_text("Set package #{future_devel_package.project} / #{future_devel_package} to be devel project/package of package #{base_package.project} / #{base_package}")
-      expect(page).not_to have_text('Development is currently happening on package')
+      expect(page).to have_no_text('Development is currently happening on package')
     end
   end
 

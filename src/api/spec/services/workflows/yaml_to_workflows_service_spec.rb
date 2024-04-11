@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe Workflows::YAMLToWorkflowsService, type: :service do
   let(:github_extractor_payload) do
     {
@@ -26,10 +24,11 @@ RSpec.describe Workflows::YAMLToWorkflowsService, type: :service do
       action: 'open',
       project_id: 1,
       path_with_namespace: 'gitlabhq/gitlab-test',
+      target_repository_full_name: 'openSUSE/open-build-service',
       event: 'Merge Request Hook'
     }
   end
-  let(:workflows_yml_file) { Rails.root.join('spec/support/files/workflows.yml').expand_path }
+  let(:workflows_yml_file) { file_fixture('workflows.yml') }
   let(:token) { create(:workflow_token) }
   let(:workflow_run) { create(:workflow_run, token: token) }
 
@@ -39,14 +38,14 @@ RSpec.describe Workflows::YAMLToWorkflowsService, type: :service do
     end
 
     context 'it supports many workflows' do
-      let(:workflows_yml_file) { Rails.root.join('spec/support/files/multiple_workflows.yml').expand_path }
+      let(:workflows_yml_file) { file_fixture('multiple_workflows.yml') }
       let(:payload) { github_extractor_payload }
 
       it { expect(subject.size).to be(2) }
     end
 
     context 'with placeholder variables' do
-      let(:workflows_yml_file) { Rails.root.join('spec/support/files/multiple_workflows.yml').expand_path }
+      let(:workflows_yml_file) { file_fixture('multiple_workflows.yml') }
       let(:payload) { github_extractor_payload }
 
       it 'maps them to their values from the webhook event payload' do
@@ -76,7 +75,7 @@ RSpec.describe Workflows::YAMLToWorkflowsService, type: :service do
     end
 
     context 'with a invalid workflows.yml' do
-      let(:workflows_yml_file) { Rails.root.join('spec/support/files/unparsable_workflows.yml').expand_path }
+      let(:workflows_yml_file) { file_fixture('unparsable_workflows.yml') }
       let(:payload) { github_extractor_payload }
 
       it 'raises a user-friendly error' do
@@ -85,7 +84,7 @@ RSpec.describe Workflows::YAMLToWorkflowsService, type: :service do
     end
 
     context 'with invalid placeholder variables' do
-      let(:workflows_yml_file) { Rails.root.join('spec/support/files/unparsable_workflows_placeholders.yml').expand_path }
+      let(:workflows_yml_file) { file_fixture('unparsable_workflows_placeholders.yml') }
       let(:payload) { github_extractor_payload }
 
       it 'raises a user-friendly error' do

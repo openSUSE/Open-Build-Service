@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe OpenRequestsWithProjectAsSourceOrTargetFinder do
   let(:target_project) { create(:project, name: 'target_project') }
   let(:source_project) { create(:project, :as_submission_source, name: 'source_project') }
@@ -17,7 +15,7 @@ RSpec.describe OpenRequestsWithProjectAsSourceOrTargetFinder do
 
   describe 'call' do
     subject do
-      OpenRequestsWithProjectAsSourceOrTargetFinder.new(BsRequest.where(state: [:new, :review, :declined])
+      OpenRequestsWithProjectAsSourceOrTargetFinder.new(BsRequest.where(state: %i[new review declined])
                                                        .joins(:bs_request_actions), project.name).call
     end
 

@@ -30,11 +30,13 @@ use BSSched::BuildJob;
 use BSSched::BuildJob::Package;
 use BSSched::BuildJob::KiwiImage;
 use BSSched::BuildJob::KiwiProduct;
+use BSSched::BuildJob::ProductCompose;
 use BSSched::BuildJob::Docker;
 use BSSched::BuildJob::Unknown;
 use BSSched::BuildJob::BuildEnv;
 
 my %handlers = (
+  'productcompose'  => BSSched::BuildJob::ProductCompose->new(),
   'kiwi-product'    => BSSched::BuildJob::KiwiProduct->new(),
   'kiwi-image'      => BSSched::BuildJob::KiwiImage->new(),
   'docker'          => BSSched::BuildJob::Docker->new(),

@@ -1,5 +1,5 @@
-# The Group class represents a group record in the database and thus a group
-# in the ActiveRbac model. Groups are arranged in trees and have a title.
+# The Group class represents a group record in the database and thus a
+# group model. Groups are arranged in trees and have a title.
 # Groups have an arbitrary number of roles and users assigned to them.
 #
 class Group < ApplicationRecord
@@ -98,15 +98,14 @@ class Group < ApplicationRecord
   end
 
   def replace_members(members)
-    Group.transaction do
-      users.delete_all
-      members.split(',').each do |m|
-        users << User.find_by_login!(m)
-      end
-      save!
+    new_members = []
+    members.split(',').each do |m|
+      new_members << User.find_by_login!(m)
     end
+    users.replace(new_members)
   rescue ActiveRecord::RecordInvalid, NotFoundError => e
     errors.add(:base, e.message)
+    false
   end
 
   def remove_user(user)

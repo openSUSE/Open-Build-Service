@@ -1,6 +1,4 @@
-require 'rails_helper'
-
-RSpec.describe SourcediffTabComponent, type: :component, vcr: true do
+RSpec.describe SourcediffTabComponent, :vcr, type: :component do
   let(:user) { create(:confirmed_user, :with_home, login: 'tux') }
   let(:target_project) { create(:project, name: 'target_project') }
   let(:source_project) { create(:project, :as_submission_source, name: 'source_project') }
@@ -19,7 +17,7 @@ RSpec.describe SourcediffTabComponent, type: :component, vcr: true do
     before do
       User.session = create(:user)
       action = bs_request.send(:action_details, opts, xml: bs_request.bs_request_actions.last)
-      render_inline(described_class.new(bs_request: bs_request, action: action, active: action[:name], index: 0, refresh: action[:diff_not_cached]))
+      render_inline(described_class.new(bs_request: bs_request, action: action, active: action[:name], index: 0))
     end
 
     it do

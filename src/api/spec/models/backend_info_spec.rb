@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe BackendInfo do
   describe '.getter' do
     context 'key does not exist' do
@@ -18,7 +16,7 @@ RSpec.describe BackendInfo do
   describe '.setter' do
     subject { BackendInfo.where(key: :lastnotification_nr).first.value.to_i }
 
-    it 'will set the assigned value' do
+    it 'sets the assigned value' do
       BackendInfo.lastnotification_nr = 100
       expect(subject).to eq(100)
     end

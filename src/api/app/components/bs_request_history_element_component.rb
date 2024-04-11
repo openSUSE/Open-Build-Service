@@ -3,12 +3,13 @@
 # It is used in the beta view of the request show page, under the Overview tab,
 # merged with the BsRequestCommentComponent.
 class BsRequestHistoryElementComponent < ApplicationComponent
-  attr_reader :element
+  attr_reader :element, :request_reviews_for_non_staging_projects
 
-  def initialize(element:)
+  def initialize(element:, request_reviews_for_non_staging_projects: [])
     super
 
     @element = element
+    @request_reviews_for_non_staging_projects = request_reviews_for_non_staging_projects
   end
 
   private
@@ -22,16 +23,20 @@ class BsRequestHistoryElementComponent < ApplicationComponent
     when 'RequestReviewAdded'
       tag.i(nil, class: 'fas fa-sm fa-circle text-warning')
     else
-      tag.i(nil, class: 'fas fa-lg fa-code-commit text-dark')
+      tag.i(nil, class: 'fas fa-lg fa-code-commit')
     end
   end
 
-  # While all history elements possibly have a comment, not all of them are from an actual human...
-  def element_with_comment_from_human?
-    ['RequestReviewAdded', 'ReviewAccepted', 'ReviewDeclined', 'RequestAccepted', 'RequestDeclined'].include?(@element.type.demodulize)
+  def expand?
+    case @element.type.demodulize
+    when 'RequestDeclined'
+      true
+    else
+      false
+    end
   end
 
-  def css_for_comment
-    element_with_comment_from_human? ? 'comment-bubble comment-bubble-content' : ''
+  def pending_reviews?
+    request_reviews_for_non_staging_projects.any?(&:new?)
   end
 end

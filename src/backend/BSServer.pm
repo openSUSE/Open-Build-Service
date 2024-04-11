@@ -203,12 +203,14 @@ sub setsocket {
   my $req = $BSServer::request || {};
   $req->{'peer'} = 'unknown';
   delete $req->{'peerport'};
+  delete $req->{'peerip'};
   if (!defined($_[0])) {
     delete $req->{'__socket'};
     return;
   }
   $req->{'__socket'} = $_[0];
-  eval { ($req->{'peerport'}, $req->{'peer'}) = getpeerdata($req) };
+  eval { ($req->{'peerport'}, $req->{'peerip'}) = getpeerdata($req) };
+  $req->{'peer'} = $req->{'peerip'} if $req->{'peerip'};
 }
 
 sub setstatus {
@@ -249,6 +251,8 @@ sub serverstatus_str {
       $state = 'F';
     } elsif ($state == 2) {
       $state = 'R';
+    } elsif ($state == 3) {
+      $state = 'K';
     } else {
       $state = '?';
     }
@@ -256,6 +260,13 @@ sub serverstatus_str {
     $str .= sprintf "%s %3d %5d %s\n", $state, $d, $s->{'pid'}, $s->{'data'};
   }
   return $str;
+}
+
+sub serverstatus_close {
+  if ($serverstatus_ok) {
+    close(STA);
+    undef $serverstatus_ok;
+  }
 }
 
 sub maxchildreached {
@@ -292,6 +303,25 @@ sub dump_child_pids {
     my $out = '';
     $out .= " $_:$server->{$n}->{$_}" for sort {$a <=> $b} keys %{$server->{$n} || {}};
     print "  $n:$out\n";
+  }
+}
+
+sub wait_for_request {
+  my ($sock, $timeout) = @_;
+  while (1) {
+    my $t;
+    if (defined($timeout)) {
+      $t = $timeout - time();
+      return undef if $t < 0;
+    }
+    my $rin = '';
+    vec($rin, fileno($sock), 1) = 1;
+    my $r = select($rin, undef, undef, $t);
+    if (!defined($r) || $r == -1) {
+      die("select: $!\n") unless $! == POSIX::EINTR;
+      next;
+    }
+    return 1 if $r;
   }
 }
 
@@ -462,8 +492,9 @@ sub server {
     }
   }
   $BSServer::request = $req;
-  eval { ($req->{'peerport'}, $req->{'peer'}) = getpeerdata($req, $peeraddr) };
+  eval { ($req->{'peerport'}, $req->{'peerip'}) = getpeerdata($req, $peeraddr) };
   warn($@) if $@;
+  $req->{'peer'} = $req->{'peerip'} if $req->{'peerip'};
 
   setsockopt($clnt, SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) if $conf->{'setkeepalive'};
 
@@ -483,6 +514,8 @@ sub server {
     return $req;
   }
 
+redo_keepalive:
+
   eval {
     do {
       local $SIG{'ALRM'} = sub {print "read request timout for peer $req->{'peer'}\n" ; POSIX::_exit(0);};
@@ -500,11 +533,47 @@ sub server {
     }
   };
   return @{$req->{'returnfromserver'}} if $req->{'returnfromserver'} && !$@;
-  reply_error($conf, $@) if $@;
-  close $clnt;
-  undef $clnt;
-  delete $req->{'__socket'};
+  if ($@) {
+    exit(0) if $req->{'keepalive_count'} && $@ eq "empty query\n";
+    if ($req->{'replying'}) {
+      delete $req->{'allow_keepalive'};
+      delete $req->{'__do_keepalive'};
+    }
+    reply_error($conf, $@);
+  }
+  if (!$req->{'__do_keepalive'}) {
+    close $clnt;
+    undef $clnt;
+    delete $req->{'__socket'};
+  }
   log_slow_requests($conf, $req) if $conf->{'slowrequestlog'};
+
+  if ($req->{'__do_keepalive'} && $clnt) {
+    # clean up req
+    if ($serverstatus_ok) {
+      if (defined(sysseek(STA, $BSServer::slot * 256, Fcntl::SEEK_SET))) {
+        syswrite(STA, pack("NNCCnZ244", time(), $$, $group, 0, 3, 'keepalive'), 256);
+      }
+    }
+    # wait for the next request
+    my $now = time();
+    my $timeout = $now + ($req->{'keepalive_maxidle'} || 10);
+    my $maxage = $req->{'keepalive_maxage'};
+    if ($maxage) {
+      $maxage += $req->{'keepalive_start'} || $req->{'starttime'} || $now;
+      $timeout = $maxage if $timeout > $maxage;
+    }
+    my $r = wait_for_request($clnt, $timeout);
+    if ($r) {
+      my %nreq = ( 'peer' => 'unknown', 'conf' => $conf, 'server' => $server, 'starttime' => time(), 'group' => $group, '__socket' => $clnt );
+      exists($req->{$_}) and $nreq{$_} = $req->{$_} for qw{peer peerip peerport keepalive_count keepalive_start};
+      $nreq{'keepalive_count'}++;
+      $nreq{'keepalive_start'} ||= $req->{'starttime'} || time();
+      %$req = %nreq;
+      goto redo_keepalive;
+    }
+  }
+
   exit(0);
 }
 
@@ -520,6 +589,12 @@ sub reply {
   my ($str, @hdrs) = @_;
 
   my $req = $BSServer::request || {};
+  delete $req->{'__do_keepalive'};
+  if ($req->{'allow_keepalive'}) {
+    if ($req->{'headers'} && ($req->{'headers'}->{'connection'} || 'keep-alive') eq 'keep-alive') {
+      $req->{'__do_keepalive'} = 1;
+    }
+  }
   if (@hdrs && $hdrs[0] =~ /^status: ((\d+).*)/i) {
     my $msg = $1;
     $msg =~ s/:/ /g;
@@ -530,7 +605,7 @@ sub reply {
     $req->{'statuscode'} ||= 200;
   }
   push @hdrs, "Cache-Control: no-cache" unless grep {/^cache-control:/i} @hdrs;
-  push @hdrs, "Connection: close";
+  push @hdrs, "Connection: close" unless $req->{'__do_keepalive'};
   push @hdrs, "Content-Length: ".length($str) if defined($str);
   my $data = join("\r\n", @hdrs)."\r\n\r\n";
   $data .= $str if defined($str) && ($req->{'action'} || '') ne 'HEAD';
@@ -593,19 +668,23 @@ sub parse_error_string {
   return ($err, $code, $tag, @hdrs);
 }
 
+sub request_infostr {
+  my ($req) = @_;
+  my $id = $req->{'reqid'} || $$;
+  return sprintf("%s: %3ds %-7s %-22s %s%s\n", BSUtil::isotime($req->{'starttime'}), time() - $req->{'starttime'}, "[$id]",
+      "$req->{'action'} ($req->{'peer'})", $req->{'path'}, ($req->{'query'}) ? "?$req->{'query'}" : '');
+}
+
 sub log_slow_requests {
   my ($conf, $req) = @_;
-  return unless $req && $conf->{'slowrequestthr'} && $req->{'starttime'};
+  return unless $req && $conf->{'slowrequestthr'} && $req->{'starttime'} && time() - $req->{'starttime'} >= $conf->{'slowrequestthr'};
   my $log = $req->{'slowrequestlog'} || $conf->{'slowrequestlog'};
   return unless $log;
-  my $duration = time() - $req->{'starttime'};
-  return unless $duration >= $conf->{'slowrequestthr'};
-  my $msg = sprintf("%s: %3ds %-7s %-22s %s%s\n", BSUtil::isotime($req->{'starttime'}), $duration, "[$$]",
-      "$req->{'action'} ($req->{'peer'})", $req->{'path'}, ($req->{'query'}) ? "?$req->{'query'}" : '');
+  my $msg = request_infostr($req);
   eval { BSUtil::appendstr($log, $msg) };
 }
 
-sub reply_error  {
+sub reply_error {
   my ($conf, $errstr) = @_;
   my ($err, $code, $tag, @hdrs) = parse_error_string($conf, $errstr);
   # send reply through custom function or standard reply
@@ -624,6 +703,7 @@ sub reply_error  {
   if ($reply_err) {
     warn("$req->{'peer'} [$$]: $err\n");
     $err = "reply_error: $reply_err";
+    chomp $err;
   }
   die("$req->{'peer'} [$$]: $err\n");
 }

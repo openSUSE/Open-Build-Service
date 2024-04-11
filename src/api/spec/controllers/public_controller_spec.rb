@@ -1,7 +1,6 @@
-require 'rails_helper'
 require 'webmock/rspec'
 
-RSpec.describe PublicController, vcr: true do
+RSpec.describe PublicController, :vcr do
   let(:project) { create(:project, name: 'public_controller_project', title: 'The Public Controller Project') }
   let(:package) { create(:package_with_file, name: 'public_controller_package', project: project) }
 
@@ -170,24 +169,24 @@ RSpec.describe PublicController, vcr: true do
   end
 
   describe 'GET #source_file history' do
+    let(:revisions) { Nokogiri::XML(response.body, &:strict).xpath('//revision') }
+
     context 'with history unlimited' do
       before do
         get :source_file, params: { project: project.name, package: package.name, filename: '_history' }
-        @revisions = Nokogiri::XML(response.body, &:strict).xpath('//revision')
       end
 
       it { expect(response).to have_http_status(:success) }
-      it { expect(@revisions.count).to be > 1 }
+      it { expect(revisions.count).to be > 1 }
     end
 
     context 'with history limited to 1' do
       before do
         get :source_file, params: { project: project.name, package: package.name, filename: '_history', limit: 1 }
-        @revisions = Nokogiri::XML(response.body, &:strict).xpath('//revision')
       end
 
       it { expect(response).to have_http_status(:success) }
-      it { expect(@revisions.count).to eq(1) }
+      it { expect(revisions.count).to eq(1) }
     end
   end
 end

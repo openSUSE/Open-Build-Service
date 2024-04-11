@@ -7,7 +7,7 @@
   .d-block.w-100
     - details = action.commit_details
     - if details
-      - if details.key?('comment')
+      - if details.key?('comment') && details['comment'].instance_of?(String)
         %p.mt-0.mb-0.fw-normal
           %span.me-2 ##{action_index + 1}
           = details['comment'].truncate(50)
@@ -23,22 +23,33 @@
       %p.mt-0.mb-0.fw-normal
         %span.me-2 ##{action_index + 1}
         - case action.type
-        - when 'add_role'
+        - when 'add_role', 'set_bugowner'
           #{action.type.titleize}
         - when 'delete'
           Delete #{project_or_package_text(action.target_project, action.target_package)}
         - when 'change_devel'
           Set #{project_or_package_text(action.source_project, action.source_package)}
+        - when 'maintenance_incident'
+          Incident #{action.source_package}
+        - when 'maintenance_release'
+          Release #{action.source_package}
         - else
           = action.name
 
-    -# delete and set_bugowner are actions on the target repo, so they don't need to mention where they are coming from
-    - unless %w[delete set_bugowner].include?(action.type)
+    -# delete is an action on the target repo, so it doesn't need to mention where they are coming from
+    - unless action.type == 'delete'
       %p.mb-0.mt-0.small
-        - if action.type == 'add_role'
+        - case action.type
+        - when 'add_role'
           Add #{action.person_name} as #{action.role} of #{project_or_package_text(action.target_project, action.target_package)}
-        - elsif action.type == 'change_devel'
+        - when 'change_devel'
           as development package of #{action.target_project}/#{action.target_package}
+        - when 'maintenance_incident'
+          from #{action.source_project} to #{action.target_project}
+        - when 'maintenance_release'
+          from #{action.source_project} to #{action.target_project} / #{action.target_package}
+        - when 'set_bugowner'
+          Set #{action.person_name || action.group_name} as bugowner of #{project_or_package_text(action.target_project, action.target_package)}
         - else
           from #{project_or_package_text(action.source_project, action.source_package)}
     - if details

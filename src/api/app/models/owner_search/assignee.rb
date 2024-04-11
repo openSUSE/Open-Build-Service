@@ -92,7 +92,7 @@ module OwnerSearch
       return package_owner if package_owner
 
       # no match, loop about projects below with this package container name
-      package.project.expand_all_projects(allow_remote_projects: false).each do |project|
+      package.project.expand_all_projects.each do |project|
         project_package = project.packages.find_by_name(package.name)
         next if project_package.nil? || @already_checked[project_package.id]
 

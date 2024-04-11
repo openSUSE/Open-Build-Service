@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe Backend::ConnectionHelper do
   let(:backend_api_fake_class) do
     extended_class = double('Fake Class with ParsePackageDiff')
@@ -23,7 +21,6 @@ RSpec.describe Backend::ConnectionHelper do
       it { expect(subject.send(:calculate_endpoint, ['/build/:param', 'my?param'])).to eq('/build/my%3Fparam') }
       it { expect(subject.send(:calculate_endpoint, ['/build/:param', 'my:param'])).to eq('/build/my:param') }
       it { expect(subject.send(:calculate_endpoint, ['/build/:param', 'my#param'])).to eq('/build/my%23param') }
-      it { expect(subject.send(:calculate_endpoint, ['/build/:param1/:param2', 'my_param', 'my_2nd_param'])).to eq('/build/my_param/my_2nd_param') }
       it { expect(subject.send(:calculate_endpoint, ['/build/:param1/:param2', 'my_param', 'my_2nd_param'])).to eq('/build/my_param/my_2nd_param') }
       it { expect(subject.send(:calculate_endpoint, ['/build/:param1/:param2', 'home:param2', 'blah'])).to eq('/build/home:param2/blah') }
     end

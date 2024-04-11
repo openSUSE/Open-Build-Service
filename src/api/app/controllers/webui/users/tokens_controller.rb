@@ -1,5 +1,5 @@
 class Webui::Users::TokensController < Webui::WebuiController
-  before_action :set_token, only: [:edit, :update, :destroy, :show]
+  before_action :set_token, only: %i[edit update destroy show]
   before_action :set_parameters, :set_package, only: [:create]
 
   after_action :verify_authorized, except: :index
@@ -102,7 +102,8 @@ class Webui::Users::TokensController < Webui::WebuiController
     # Prevent setting a package for a workflow token
     return if @params[:type] == 'workflow'
 
-    @token = Token.token_type(@params[:type]).new(description: @params[:description])
+    @token = Token.new(description: @params[:description])
+    @token.write_attribute(:type, @params[:type])
 
     # Check if only project_name or only package_name are present
     if @extra_params[:project_name].present? ^ @extra_params[:package_name].present?

@@ -14,21 +14,26 @@ namespace :dev do
 
       workflow_token = Token::Workflow.find_by(description: 'Testing token') || create(:workflow_token, executor: admin, description: 'Testing token')
 
+      # This automatically subscribes everyone to the workflow run related events
+      EventSubscription.create!(eventtype: Event::WorkflowRunFail.name, channel: :web, receiver_role: :token_executor, enabled: true)
+
       # GitHub
-      create(:workflow_run_github_running, token: workflow_token)
-      create(:workflow_run_github_failed, token: workflow_token)
-      create(:workflow_run_github_succeeded, :push, token: workflow_token)
-      create(:workflow_run_github_succeeded, :tag_push, token: workflow_token)
-      create(:workflow_run_github_succeeded, :pull_request_opened, token: workflow_token)
-      create(:workflow_run_github_succeeded, :pull_request_closed, token: workflow_token)
+      create(:workflow_run, token: workflow_token)
+      create(:workflow_run, :failed, token: workflow_token)
+      create(:workflow_run, :succeeded, :push, token: workflow_token)
+      create(:workflow_run, :succeeded, :tag_push, token: workflow_token)
+      create(:workflow_run, :succeeded, token: workflow_token)
+      create(:workflow_run, :succeeded, :pull_request_closed, token: workflow_token)
+      create(:workflow_run, :with_url, token: workflow_token)
+      create(:workflow_run, :without_configuration_data, token: workflow_token)
 
       # GitLab
-      create(:workflow_run_gitlab_running, token: workflow_token)
-      create(:workflow_run_gitlab_failed, token: workflow_token)
-      create(:workflow_run_gitlab_succeeded, :push, token: workflow_token)
-      create(:workflow_run_gitlab_succeeded, :tag_push, token: workflow_token)
-      create(:workflow_run_gitlab_succeeded, :pull_request_opened, token: workflow_token)
-      create(:workflow_run_gitlab_succeeded, :pull_request_closed, token: workflow_token)
+      create(:workflow_run_gitlab, token: workflow_token)
+      create(:workflow_run_gitlab, :failed, token: workflow_token)
+      create(:workflow_run_gitlab, :succeeded, :push, token: workflow_token)
+      create(:workflow_run_gitlab, :succeeded, :tag_push, token: workflow_token)
+      create(:workflow_run_gitlab, :succeeded, token: workflow_token)
+      create(:workflow_run_gitlab, :succeeded, :pull_request_closed, token: workflow_token)
 
       workflow_runs_with_artifacts = WorkflowRun.where(status: 'success')
 
@@ -40,6 +45,7 @@ namespace :dev do
         create(:workflow_artifacts_per_step_link_package, workflow_run: workflow_run, source_project_name: source_project_name, target_project_name: target_project_name)
         create(:workflow_artifacts_per_step_rebuild_package, workflow_run: workflow_run, source_project_name: source_project_name, target_project_name: target_project_name)
         create(:workflow_artifacts_per_step_config_repositories, workflow_run: workflow_run, source_project_name: source_project_name, target_project_name: target_project_name)
+        create(:workflow_artifacts_per_step_set_flags, workflow_run: workflow_run, source_project_name: source_project_name, target_project_name: target_project_name)
       end
     end
 
@@ -48,7 +54,7 @@ namespace :dev do
       workflow_runs = WorkflowRun.where(status: 'running')
                                  .select do |workflow_run|
         workflow_run.hook_event.in?(['pull_request', 'Merge Request Hook']) &&
-          workflow_run.hook_action.in?(['closed', 'close', 'merge'])
+          workflow_run.hook_action.in?(%w[closed close merge])
       end
 
       puts "There are #{workflow_runs.count} workflow runs affected"
@@ -74,5 +80,5 @@ end
 # If the name of the project created by the workflow is "home:Iggy:iggy:hello_world:PR-68", its postfix
 # is "iggy:hello_world:PR-68". This is the only information we can extract from the workflow_run.
 def target_project_name_postfix(workflow_run)
-  ":#{workflow_run.repository_name.tr('/', ':')}:PR-#{workflow_run.event_source_name}" if workflow_run.repository_name && workflow_run.event_source_name
+  ":#{workflow_run.repository_owner}:#{workflow_run.repository_name}:PR-#{workflow_run.event_source_name}" if workflow_run.repository_name && workflow_run.event_source_name
 end

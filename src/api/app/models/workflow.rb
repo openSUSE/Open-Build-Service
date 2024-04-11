@@ -1,52 +1,52 @@
 class Workflow
   include ActiveModel::Model
   include WorkflowInstrumentation # for run_callbacks
+  include WorkflowVersionMatcher
 
   SCM_CI_DOCUMENTATION_URL = 'https://openbuildservice.org/help/manuals/obs-user-guide/cha.obs.scm_ci_workflow_integration.html'.freeze
 
   SUPPORTED_STEPS = {
     branch_package: Workflow::Step::BranchPackageStep, link_package: Workflow::Step::LinkPackageStep,
     configure_repositories: Workflow::Step::ConfigureRepositories, rebuild_package: Workflow::Step::RebuildPackage,
-    set_flags: Workflow::Step::SetFlags, trigger_services: Workflow::Step::TriggerServices
+    set_flags: Workflow::Step::SetFlags, trigger_services: Workflow::Step::TriggerServices,
+    submit_request: Workflow::Step::SubmitRequest
   }.freeze
 
-  SUPPORTED_FILTERS = [:branches, :event].freeze
-  STEPS_WITH_NO_TARGET_PROJECT_TO_RESTORE_OR_DESTROY = [Workflow::Step::ConfigureRepositories, Workflow::Step::RebuildPackage,
-                                                        Workflow::Step::SetFlags].freeze
+  SUPPORTED_FILTERS = %i[branches event].freeze
 
-  attr_accessor :workflow_instructions, :scm_webhook, :token, :workflow_run
+  attr_accessor :workflow_instructions, :scm_webhook, :token, :workflow_run, :workflow_version_number
 
   def initialize(attributes = {})
     run_callbacks(:initialize) do
       super
       @workflow_instructions = attributes[:workflow_instructions].deep_symbolize_keys
+      @workflow_version_number = attributes[:workflow_version_number]
     end
   end
 
   validates_with WorkflowStepsValidator
   validates_with WorkflowFiltersValidator
+  validates_with WorkflowVersionValidator
+  validate :event_supports_branches_filter?, on: :call, if: :event_matches_event_filter?
 
   def call
     run_callbacks(:call) do
       return unless event_matches_event_filter?
       return unless branch_matches_branches_filter?
 
-      case
-      when scm_webhook.closed_merged_pull_request?
-        destroy_target_projects
-      when scm_webhook.reopened_pull_request?
-        restore_target_projects
-      when scm_webhook.new_pull_request?, scm_webhook.updated_pull_request?, scm_webhook.push_event?, scm_webhook.tag_push_event?
-        steps.each do |step|
-          call_step_and_collect_artifacts(step)
-        end
+      steps.each do |step|
+        # ArtifactsCollector can only be called if the step.call doesn't return nil because of a validation error
+        step.call && Workflows::ArtifactsCollector.new(step: step, workflow_run_id: workflow_run.id).call
       end
     end
   end
 
-  # ArtifactsCollector can only be called if the step.call doesn't return nil because of a validation error
-  def call_step_and_collect_artifacts(step)
-    step.call && Workflows::ArtifactsCollector.new(step: step, workflow_run_id: workflow_run.id).call
+  def event_supports_branches_filter?
+    # Tags do not have a reference to a branch, they are referring to a commit
+    return false unless @workflow_instructions.dig(:filters, :branches).present? && scm_webhook.tag_push_event?
+
+    errors.add(:filters, 'for branches are not supported for the tag push event. ' \
+                         "Documentation for filters: #{WorkflowFiltersValidator::DOCUMENTATION_LINK}")
   end
 
   def steps
@@ -96,6 +96,8 @@ class Workflow
       scm_webhook.tag_push_event?
     when 'pull_request'
       scm_webhook.pull_request_event?
+    when 'merge_request'
+      scm_webhook.pull_request_event? && feature_available_for_workflow_version?(workflow_version: workflow_version_number, feature_name: 'event_aliases')
     else
       false
     end
@@ -111,35 +113,5 @@ class Workflow
     return true if branches_ignore.present? && branches_ignore.exclude?(scm_webhook.payload[:target_branch])
 
     false
-  end
-
-  # TODO: Extract this into a service
-  def destroy_target_projects
-    # Do not process steps for which there's nothing to do
-    processable_steps = steps.reject { |step| step.class.in?(STEPS_WITH_NO_TARGET_PROJECT_TO_RESTORE_OR_DESTROY) }
-    target_packages = processable_steps.map(&:target_package).uniq.compact
-    EventSubscription.where(channel: 'scm', token: token, package: target_packages).delete_all
-
-    target_project_names = processable_steps.map(&:target_project_name).uniq.compact
-    # We want the callbacks to run after destroy, so we can't use delete_all
-    Project.where(name: target_project_names).destroy_all
-  end
-
-  # TODO: Extract this into a service
-  def restore_target_projects
-    token_user_login = token.executor.login
-
-    # Do not process steps for which there's nothing to do
-    processable_steps = steps.reject { |step| step.class.in?(STEPS_WITH_NO_TARGET_PROJECT_TO_RESTORE_OR_DESTROY) }
-    target_project_names = processable_steps.map(&:target_project_name).uniq.compact
-    target_project_names.each do |target_project_name|
-      Project.restore(target_project_name, user: token_user_login)
-    end
-
-    target_packages = processable_steps.map(&:target_package).uniq.compact
-    target_packages.each do |target_package|
-      # FIXME: We shouldn't rely on a workflow step to be able to create/update subscriptions
-      processable_steps.first.create_or_update_subscriptions(target_package)
-    end
   end
 end

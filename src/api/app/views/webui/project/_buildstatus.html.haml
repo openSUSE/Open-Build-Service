@@ -18,7 +18,7 @@
       - repository_name = repository.tr('.', '_')
       - expanded = repository_expanded?(collapsed_repositories, repository_name)
       .d-flex.flex-column
-        .d-flex.flex-row.py-1.bg-light.ps-1.ps-sm-2
+        .d-flex.flex-row.py-1.buildresult_repo_header.ps-1.ps-sm-2
           = link_to(word_break(repository, 12),
             project_repository_state_path(project: project.name, repository: repository),
             title: "Repository #{repository}")
@@ -28,7 +28,7 @@
           - build_results.sort_by(&:architecture).each do |build_result|
             .d-flex.flex-row.flex-nowrap.py-1
               .repository-state
-                = repository_status_icon(status: build_result.state)
+                = repository_status_icon(status: build_result.state, details: build_result.details)
                 %span.ms-1
                   = link_to(build_result.architecture, { action: :monitor,
                                                   "#{valid_xml_id("repo_#{repository}")}": 1,

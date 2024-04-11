@@ -556,7 +556,7 @@ class ReadPermissionTest < ActionDispatch::IntegrationTest
     assert_response :success
     get '/source/home:tom:temp/ProtectedPackage'
     assert_response 403
-    [:branch, :diff, :linkdiff].each do |c|
+    %i[branch diff linkdiff].each do |c|
       # would not work, but needs to return with 403 in any case
       post '/source/home:tom:temp/ProtectedPackage', params: { cmd: c }
       assert_response 403
@@ -634,7 +634,7 @@ class ReadPermissionTest < ActionDispatch::IntegrationTest
     assert_response 403
     get '/source/home:tom:temp/Package/my_file'
     assert_response 403
-    [:branch, :diff, :linkdiff, :copy].each do |c|
+    %i[branch diff linkdiff copy].each do |c|
       # would not work, but needs to return with 403 in any case
       post '/source/home:tom:temp/Package', params: { cmd: c, oproject: 'home:tom:temp', opackage: 'Package' }
       assert_response 403
@@ -791,10 +791,9 @@ class ReadPermissionTest < ActionDispatch::IntegrationTest
         params: '<project name="home:binary_homer:ProtectedProject1"> <title/> <description/> <binarydownload><disable/></binarydownload> </project>'
     assert_response 200
 
-    # rubocop:disable Layout/LineLength
     put url_for(controller: :source_project_meta, action: :update, project: 'home:binary_homer:ProtectedProject1'),
-        params: '<project name="home:binary_homer:ProtectedProject1"> <title/> <description/> <repository name="BinaryprotectedProjectRepo"> <path repository="nada" project="BinaryprotectedProject"/> <arch>i586</arch> </repository> </project>'
-    # rubocop:enable Layout/LineLength
+        params: '<project name="home:binary_homer:ProtectedProject1"> <title/> <description/> ' \
+                '<repository name="BinaryprotectedProjectRepo"> <path repository="nada" project="BinaryprotectedProject"/> <arch>i586</arch> </repository> </project>'
     assert_response 200
 
     # check if sufficiently protected projects can access protected projects
@@ -815,10 +814,8 @@ class ReadPermissionTest < ActionDispatch::IntegrationTest
     login_tom
 
     # check if unsufficiently permitted users tries to access protected projects
-    # rubocop:disable Layout/LineLength
     put url_for(controller: :source_project_meta, action: :update, project: 'home:tom:ProtectedProject2'),
         params: '<project name="home:tom:ProtectedProject2"> <title/> <description/>  <repository name="HiddenProjectRepo"> <path repository="nada" project="HiddenProject"/> <arch>i586</arch> </repository> </project>'
-    # rubocop:enable Layout/LineLength
     assert_response 404
 
     # try to access it with a user permitted for access
@@ -829,17 +826,13 @@ class ReadPermissionTest < ActionDispatch::IntegrationTest
     # STDERR.puts(@response.body)
     assert_response 200
 
-    # rubocop:disable Layout/LineLength
     put url_for(controller: :source_project_meta, action: :update, project: 'home:adrian:ProtectedProject1'),
         params: '<project name="home:adrian:ProtectedProject1"> <title/> <description/> <repository name="HiddenProjectRepo"> <path repository="nada" project="HiddenProject"/> <arch>i586</arch> </repository> </project>'
-    # rubocop:enable Layout/LineLength
     assert_response 404
 
     # building against
-    # rubocop:disable Layout/LineLength
     put url_for(controller: :source_project_meta, action: :update, project: 'home:adrian:ProtectedProject2'),
         params: '<project name="home:adrian:ProtectedProject2"> <title/> <description/> <repository name="HiddenProjectRepo"> <path repository="nada" project="HiddenProject"/> <arch>i586</arch> </repository> </project>'
-    # rubocop:enable Layout/LineLength
     assert_response 404
 
     # check if download protected project has to access protected project, which reveals Hidden project existence to others and is and error
@@ -847,10 +840,8 @@ class ReadPermissionTest < ActionDispatch::IntegrationTest
         params: '<project name="home:adrian:ProtectedProject2"> <title/> <description/> <binarydownload><disable/></binarydownload> </project>'
     assert_response 200
 
-    # rubocop:disable Layout/LineLength
     put url_for(controller: :source_project_meta, action: :update, project: 'home:adrian:ProtectedProject2'),
         params: '<project name="home:adrian:ProtectedProject2"> <title/> <description/> <repository name="HiddenProjectRepo"> <path repository="nada" project="HiddenProject"/> <arch>i586</arch> </repository> </project>'
-    # rubocop:enable Layout/LineLength
     assert_response 404
 
     # check if access protected project has access binarydownload protected project
@@ -860,10 +851,9 @@ class ReadPermissionTest < ActionDispatch::IntegrationTest
     # STDERR.puts(@response.body)
     assert_response 200
 
-    # rubocop:disable Layout/LineLength
     put url_for(controller: :source_project_meta, action: :update, project: 'home:binary_homer:ProtectedProject3'),
-        params: '<project name="home:binary_homer:ProtectedProject3"> <title/> <description/> <repository name="BinaryprotectedProjectRepo"> <path repository="nada" project="BinaryprotectedProject"/> <arch>i586</arch> </repository> </project>'
-    # rubocop:enable Layout/LineLength
+        params: '<project name="home:binary_homer:ProtectedProject3"> <title/> <description/> ' \
+                '<repository name="BinaryprotectedProjectRepo"> <path repository="nada" project="BinaryprotectedProject"/> <arch>i586</arch> </repository> </project>'
     assert_response 200
 
     # cleanup

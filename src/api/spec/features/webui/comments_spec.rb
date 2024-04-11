@@ -1,6 +1,6 @@
 require 'browser_helper'
 
-RSpec.describe 'Comments', js: true, vcr: true do
+RSpec.describe 'Comments', :js, :vcr do
   let(:user) { create(:confirmed_user, :with_home, login: 'burdenski') }
   let!(:comment) { create(:comment_project, commentable: user.home_project, user: user) }
   let!(:old_comment_text) { comment.body }
@@ -12,6 +12,19 @@ RSpec.describe 'Comments', js: true, vcr: true do
     find_button('Add comment').click
 
     expect(page).to have_text('Comment Body')
+  end
+
+  it 'can be created using canned responses' do
+    Flipper.enable(:content_moderation)
+    login user
+    create(:canned_response, user: user, title: 'test reply', content: 'This is a canned response')
+    visit project_show_path(user.home_project)
+    fill_in(placeholder: 'Write your comment here... (Markdown markup is supported)', with: 'Reply Body')
+    find_button('Canned Responses').click
+    find('li', text: 'test reply').click
+    find_button('Add comment').click
+
+    expect(page).to have_text('This is a canned response')
   end
 
   it 'answering comments' do
@@ -40,6 +53,6 @@ RSpec.describe 'Comments', js: true, vcr: true do
     click_button('Delete')
 
     visit project_show_path(user.home_project)
-    expect(page).not_to have_text(old_comment_text)
+    expect(page).to have_no_text(old_comment_text)
   end
 end

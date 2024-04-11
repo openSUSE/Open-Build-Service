@@ -1,6 +1,6 @@
 require 'browser_helper'
 
-RSpec.describe 'MaintainedProjects', js: true do
+RSpec.describe 'MaintainedProjects', :js do
   let!(:admin_user) { create(:admin_user) }
   let(:opensuse_project) { create(:project, name: 'openSUSE') }
   let(:opensuse_project_update) { create(:project, name: 'openSUSE_Update') }
@@ -16,8 +16,8 @@ RSpec.describe 'MaintainedProjects', js: true do
       it 'maintenance projects are not shown' do
         visit project_maintained_projects_path(project_name: maintenance_project.name)
         expect(page).to have_text('Maintained Projects')
-        expect(page).not_to have_selector('#new-maintenance-project-modal')
-        expect(page).not_to have_selector('#delete-maintained-project-modal')
+        expect(page).to have_no_css('#new-maintenance-project-modal')
+        expect(page).to have_no_css('#delete-maintained-project-modal')
       end
     end
 
@@ -27,31 +27,31 @@ RSpec.describe 'MaintainedProjects', js: true do
         visit project_maintained_projects_path(project_name: maintenance_project.name)
 
         expect(page).to have_text('Maintained Projects')
-        expect(page).to have_selector('#new-maintenance-project-modal', visible: :hidden)
-        expect(page).to have_selector('#delete-maintained-project-modal', visible: :hidden)
+        expect(page).to have_css('#new-maintenance-project-modal', visible: :hidden)
+        expect(page).to have_css('#delete-maintained-project-modal', visible: :hidden)
       end
 
       it 'click on add new project' do
         login admin_user
         visit project_maintained_projects_path(project_name: maintenance_project.name)
 
-        expect(page).to have_selector('#new-maintenance-project-modal', visible: :hidden)
+        expect(page).to have_css('#new-maintenance-project-modal', visible: :hidden)
         click_link('Add Project to Maintain')
 
-        expect(page).to have_selector('#new-maintenance-project-modal', visible: :visible)
-        expect(page).to have_selector('#delete-maintained-project-modal', visible: :hidden)
+        expect(page).to have_css('#new-maintenance-project-modal', visible: :visible)
+        expect(page).to have_css('#delete-maintained-project-modal', visible: :hidden)
       end
 
       it 'click on delete project' do
         login admin_user
         visit project_maintained_projects_path(project_name: maintenance_project.name)
 
-        expect(page).to have_selector('#new-maintenance-project-modal', visible: :hidden)
+        expect(page).to have_css('#new-maintenance-project-modal', visible: :hidden)
 
         click_link('Delete Project')
 
-        expect(page).to have_selector('#new-maintenance-project-modal', visible: :hidden)
-        expect(page).to have_selector('#delete-maintained-project-modal', visible: :visible)
+        expect(page).to have_css('#new-maintenance-project-modal', visible: :hidden)
+        expect(page).to have_css('#delete-maintained-project-modal', visible: :visible)
       end
 
       it 'delete project' do

@@ -6,9 +6,8 @@ class Status::RequiredChecksController < ApplicationController
   #### Self config
 
   #### Callbacks macros: before_action, after_action, etc.
-  before_action :set_project, only: [:index, :create, :destroy]
-  before_action :set_checkable, only: [:index, :create, :destroy]
-  before_action :set_required_check, only: [:destroy]
+  before_action :set_project, only: %i[index create destroy]
+  before_action :set_checkable, only: %i[index create destroy]
   skip_before_action :require_login, only: [:index]
   # Pundit authorization policies control
   after_action :verify_authorized
@@ -46,7 +45,8 @@ class Status::RequiredChecksController < ApplicationController
   # DELETE /status_reports/built_repositories/:project_name/:repository_name/:architecture_name/required_checks/:name
   def destroy
     authorize @checkable
-    @checkable.required_checks -= [params[:name]]
+    set_required_check
+    @checkable.required_checks.delete(@required_check)
 
     if @checkable.save
       render_ok
@@ -71,11 +71,7 @@ class Status::RequiredChecksController < ApplicationController
 
     return if @project
 
-    render_error(
-      status: 404,
-      errorcode: 'not_found',
-      message: "Project '#{params[:project_name]}' not found."
-    )
+    render_error status: 404, message: "Project '#{params[:project_name]}' not found."
   end
 
   def set_checkable
@@ -85,23 +81,24 @@ class Status::RequiredChecksController < ApplicationController
   def checkable
     return @project unless params[:repository_name]
 
-    repo = @project.repositories.find_by!(name: params[:repository_name])
+    repo = @project.repositories.find_by(name: params[:repository_name])
+    raise NotFoundError, "Couldn't find repository '#{params[:repository_name]}'" if repo.nil?
+
     return repo unless params[:architecture_name]
 
-    architecture = Architecture.find_by!(name: params[:architecture_name])
-    repo.repository_architectures.find_by!(architecture: architecture)
+    architecture = Architecture.find_by(name: params[:architecture_name])
+    raise NotFoundError, "Couldn't find architecture '#{params[:architecture_name]}'" if architecture.nil?
+
+    repo_architecture = repo.repository_architectures.find_by(architecture: architecture)
+    raise NotFoundError, "Couldn't find architecture '#{architecture}'" if repo_architecture.nil?
+
+    repo_architecture
   end
 
-  # Use callbacks to share common setup or constraints between actions.
   def set_required_check
-    @required_check = @checkable.required_checks.find(params[:id])
-    return if @required_check
+    @required_check = params[:name] if @checkable.required_checks.include?(params[:name])
 
-    render_error(
-      status: 404,
-      errorcode: 'not_found',
-      message: "Unable to find required check with id '#{params[:id]}'"
-    )
+    raise NotFoundError, "Unable to find required check with name '#{params[:name]}'" if @required_check.nil?
   end
 
   def names

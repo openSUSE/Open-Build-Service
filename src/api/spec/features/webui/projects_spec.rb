@@ -1,6 +1,6 @@
 require 'browser_helper'
 
-RSpec.describe 'Projects', js: true, vcr: true do
+RSpec.describe 'Projects', :js, :vcr do
   let!(:admin_user) { create(:admin_user, :with_home) }
   let!(:user) { create(:confirmed_user, :with_home, login: 'Jane') }
   let(:project) { user.home_project }
@@ -23,16 +23,16 @@ RSpec.describe 'Projects', js: true, vcr: true do
         login user
         visit project_show_path(project: project)
 
-        click_on('Edit')
+        click_link('Edit')
         expect(page).to have_text("Edit Project #{project}")
 
-        fill_in 'project_title', with: 'My Title hopefully got changed'
+        fill_in 'project_title', with: 'My Title "hopefully" got changed'
         fill_in 'project_description', with: 'New description. No kidding.. Brand new!'
         fill_in 'project_url', with: 'https://test.url'
         click_button 'Update'
         wait_for_ajax
 
-        expect(find(:id, 'project-title')).to have_text('My Title hopefully got changed')
+        expect(find(:id, 'project-title')).to have_text('My Title "hopefully" got changed')
         expect(find(:id, 'description-text')).to have_text('New description. No kidding.. Brand new!')
         expect(page).to have_text('https://test.url')
       end
@@ -47,10 +47,10 @@ RSpec.describe 'Projects', js: true, vcr: true do
         login user
         visit project_show_path(project: project)
 
-        click_on('Edit')
+        click_link('Edit')
         expect(page).to have_text("Edit Project #{project}")
 
-        fill_in 'project_title', with: 'My Title hopefully got changed'
+        fill_in 'project_title', with: 'My Title "hopefully" got changed'
         fill_in 'project_description', with: 'New description. No kidding.. Brand new!'
         click_link 'Cancel'
         wait_for_ajax
@@ -94,7 +94,7 @@ RSpec.describe 'Projects', js: true, vcr: true do
       expect(page).to have_content('Successfully unlocked project')
 
       visit project_show_path(project: locked_project.name)
-      expect(page).not_to have_text('is locked')
+      expect(page).to have_no_text('is locked')
     end
 
     it 'fail to unlock' do
@@ -185,8 +185,10 @@ RSpec.describe 'Projects', js: true, vcr: true do
       visit project_show_path(maintenance_project)
       click_link('Incidents')
       page.execute_script('window.scrollBy(0,50)')
+      # The next click fires a step that might take longer than expected
+      # therefore the test after that has a `wait` parameter with a sufficient amount of time to wait for it
       click_link('Create Maintenance Incident')
-      expect(page).to have_css('#project-title', text: "#{maintenance_project}:0")
+      expect(page).to have_css('#project-title', text: "#{maintenance_project}:0", wait: 12)
 
       # We can not create this via the Bootstrap UI, except by adding plain XML to the meta editor
       repository = create(:repository, project: Project.find_by(name: "#{project.name}:maintenance_project:0"), name: 'target')

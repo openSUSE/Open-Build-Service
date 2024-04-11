@@ -37,6 +37,22 @@ my $maxredirects = 10;
 my @binsufs = qw{rpm deb pkg.tar.gz pkg.tar.xz pkg.tar.zst};
 my $binsufsre = join('|', map {"\Q$_\E"} @binsufs);
 
+sub remove_dot_segments {
+  my ($url) = @_;
+  return $url unless $url =~ /^([^:\/]+:\/\/[^\/]+\/)(.*$)/;
+  my ($intro, $path) = ($1, $2);
+  my $trail= '';
+  $trail = $1 if $path =~ s/([#\?].*$)//;
+  my @p;
+  for (split('/', $path)) {
+    next if $_ eq '.' || $_ eq '';
+    pop @p if $_ eq '..';
+    push @p, $_ if $_ ne '..';
+  }
+  $path = join('/', @p);
+  return "$intro$path$trail";
+}
+
 sub is_wanted_dodbinary {
   my ($pool, $p, $path, $doverify) = @_;
   my $q;
@@ -119,6 +135,8 @@ sub fetchdodbinary {
   $url .= '/' unless $url =~ /\/$/;
   $url .= $pool->pkg2path($p);
   my $tmp = "$gdst/:full/.dod.$$.$pkgname";
+  # fix url
+  $url = remove_dot_segments $url;
   #print "fetching: $url\n";
   my $param = {'uri' => $url, 'filename' => $tmp, 'receiver' => \&BSHTTP::file_receiver, 'proxy' => $proxy};
   $param->{'maxredirects'} = $maxredirects if defined $maxredirects;

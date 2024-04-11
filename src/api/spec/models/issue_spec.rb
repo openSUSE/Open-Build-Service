@@ -1,10 +1,3 @@
-require 'rails_helper'
-
-# WARNING: If you change tests make sure you uncomment this line
-# and start a test backend. Some of the actions
-# require real backend answers for projects/packages.
-# CONFIG['global_write_through'] = true
-
 RSpec.describe Issue do
   describe '#fetch_issues' do
     let!(:issue_tracker) { create(:issue_tracker) }
@@ -13,9 +6,9 @@ RSpec.describe Issue do
     before do
       allow(IssueTracker).to receive(:find_by).and_return(issue_tracker)
       allow(issue_tracker).to receive(:fetch_issues)
-    end
 
-    subject! { issue.fetch_issues }
+      issue.fetch_issues
+    end
 
     it 'fetches the issues' do
       expect(issue_tracker).to have_received(:fetch_issues)

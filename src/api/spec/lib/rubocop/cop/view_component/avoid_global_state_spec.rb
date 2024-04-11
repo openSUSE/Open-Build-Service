@@ -1,4 +1,4 @@
-require 'rails_helper'
+require 'support/rubocop'
 require './lib/rubocop/cop/view_component/avoid_global_state'
 
 RSpec.describe RuboCop::Cop::ViewComponent::AvoidGlobalState, :config do

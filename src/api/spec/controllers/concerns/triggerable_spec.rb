@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe Triggerable do
   # NOTE: this concern is not only used from controllers, also from models
   let(:fake_controller) do
@@ -172,7 +170,7 @@ RSpec.describe Triggerable do
   end
 
   describe '#set_multibuild_flavor' do
-    let(:multibuild_package) { create(:multibuild_package, name: 'package_a', project: project, flavors: ['libfoo1', 'libfoo2']) }
+    let(:multibuild_package) { create(:multibuild_package, name: 'package_a', project: project, flavors: %w[libfoo1 libfoo2]) }
     let(:multibuild_flavor) { 'libfoo2' }
 
     context 'with a token that allows multibuild' do

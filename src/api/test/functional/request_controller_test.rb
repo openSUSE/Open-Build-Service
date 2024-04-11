@@ -1,4 +1,3 @@
-# rubocop:disable Layout/LineLength
 # rubocop:disable Metrics/ClassLength
 require File.expand_path(File.dirname(__FILE__) + '/..') + '/test_helper'
 require 'request_controller'
@@ -1598,7 +1597,8 @@ class RequestControllerTest < ActionDispatch::IntegrationTest
     assert_match(/No Submits/, @response.body)
     assert_xml_tag tag: 'status', attributes: { code: 'request_rejected' }
     # but it works when blocking only for others
-    post '/source/home:Iggy/TestPack/_attribute', params: "<attributes><attribute namespace='OBS' name='RejectRequests'> <value>Submits welcome</value> <value>delete</value> <value>set_bugowner</value> </attribute> </attributes>"
+    post '/source/home:Iggy/TestPack/_attribute',
+         params: "<attributes><attribute namespace='OBS' name='RejectRequests'> <value>Submits welcome</value> <value>delete</value> <value>set_bugowner</value> </attribute> </attributes>"
     assert_response :success
     post '/request?cmd=create', params: rq
     assert_response :success
@@ -1936,7 +1936,7 @@ class RequestControllerTest < ActionDispatch::IntegrationTest
 
   def test_submit_cleanup_in_not_writable_source
     login_Iggy
-    ['cleanup', 'update'].each do |modify|
+    %w[cleanup update].each do |modify|
       req = "<request>
               <action type='submit'>
                 <source project='Apache' package='apache2' rev='1' />
@@ -2016,7 +2016,7 @@ class RequestControllerTest < ActionDispatch::IntegrationTest
   end
 
   def test_reopen_a_review_declined_request
-    ['new', 'review'].each do |newstate|
+    %w[new review].each do |newstate|
       login_Iggy
       post '/source/Apache/apache2', params: { cmd: :branch }
       assert_response :success
@@ -2665,7 +2665,7 @@ class RequestControllerTest < ActionDispatch::IntegrationTest
                 <updatelink>true</updatelink>
               </options>
             </action>
-            <description>SUBMIT</description>
+            <description>SUBMIT bso#123</description>
             <state who='Iggy' name='new'/>
           </request>"
     post '/request?cmd=create', params: req
@@ -2679,6 +2679,11 @@ class RequestControllerTest < ActionDispatch::IntegrationTest
     post "/request/#{id}?cmd=diff&view=xml"
     assert_response :success
     assert_xml_tag(parent: { tag: 'file', attributes: { state: 'changed' } }, tag: 'old', attributes: { name: '_link' })
+
+    # Validate also the issue parsing of the description
+    post "/request/#{id}?cmd=diff&view=xml&withdescriptionissues=1"
+    assert_response :success
+    assert_xml_tag(parent: { tag: 'issues' }, tag: 'issue', attributes: { tracker: 'bso', name: '123' })
 
     # accept the request
     login_king
@@ -2909,7 +2914,7 @@ class RequestControllerTest < ActionDispatch::IntegrationTest
     get "/request/#{id2}"
     assert_response :success
     assert_xml_tag(tag: 'state', attributes: { name: 'declined', when: '2010-07-14T00:00:00', who: 'Iggy' })
-    assert_xml_tag(tag: 'comment', content: "The target package 'TestPack' has been removed")
+    assert_xml_tag(tag: 'comment', content: "The package 'home:Iggy/TestPack' has been removed")
 
     # good, now revive to fix the state of the union
     post '/source/home:Iggy/TestPack?cmd=undelete'
@@ -3362,7 +3367,7 @@ class RequestControllerTest < ActionDispatch::IntegrationTest
     assert_xml_tag(tag: 'package', attributes: { project: 'BaseDistro' }) # it appears via project link
 
     # and create a request to wrong target
-    ['delete', 'set_bugowner', 'add_role', 'change_devel'].each do |at|
+    %w[delete set_bugowner add_role change_devel].each do |at|
       rq = '<request>
              <action type="' + at + '">'
       rq += "  <source project='BaseDistro' package='pack1'/>" if at == 'change_devel'
@@ -3802,4 +3807,3 @@ class RequestControllerTest < ActionDispatch::IntegrationTest
     assert_equal 'important', node['request'][1]['priority']
   end
 end
-# rubocop:enable Layout/LineLength

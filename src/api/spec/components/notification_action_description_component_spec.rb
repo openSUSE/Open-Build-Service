@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe NotificationActionDescriptionComponent, type: :component do
   context 'when the notification is for a Event::RequestStatechange event with a request having only a target' do
     let(:target_project) { create(:project, name: 'project_123') }
@@ -12,7 +10,7 @@ RSpec.describe NotificationActionDescriptionComponent, type: :component do
     end
 
     it 'renders a div containing only the target project and package names' do
-      expect(rendered_content).to have_selector('div.smart-overflow', text: 'project_123 / package_123')
+      expect(rendered_content).to have_css('div.smart-overflow', text: 'project_123 / package_123')
     end
   end
 
@@ -29,7 +27,7 @@ RSpec.describe NotificationActionDescriptionComponent, type: :component do
     end
 
     it 'renders a div containing only the target project' do
-      expect(rendered_content).to have_selector('div.smart-overflow', exact_text: 'project_12345')
+      expect(rendered_content).to have_css('div.smart-overflow', exact_text: 'project_12345')
     end
   end
 
@@ -48,7 +46,7 @@ RSpec.describe NotificationActionDescriptionComponent, type: :component do
     end
 
     it 'renders a div containing the source and target project/package names' do
-      expect(rendered_content).to have_selector('div.smart-overflow', text: 'source_project_123 / source_package_123project_123 / package_123')
+      expect(rendered_content).to have_css('div.smart-overflow', text: 'source_project_123 / source_package_123project_123 / package_123')
     end
   end
 
@@ -63,7 +61,7 @@ RSpec.describe NotificationActionDescriptionComponent, type: :component do
     end
 
     it 'renders a div containing only the target project and package names' do
-      expect(rendered_content).to have_selector('div.smart-overflow', text: 'project_123 / package_123')
+      expect(rendered_content).to have_css('div.smart-overflow', text: 'project_123 / package_123')
     end
   end
 
@@ -79,7 +77,7 @@ RSpec.describe NotificationActionDescriptionComponent, type: :component do
     end
 
     it 'renders a div containing only the target project and package names' do
-      expect(rendered_content).to have_selector('div.smart-overflow', text: 'project_123 / package_123')
+      expect(rendered_content).to have_css('div.smart-overflow', text: 'project_123 / package_123')
     end
   end
 
@@ -93,7 +91,7 @@ RSpec.describe NotificationActionDescriptionComponent, type: :component do
     end
 
     it 'renders a div containing the project name' do
-      expect(rendered_content).to have_selector('div.smart-overflow', text: 'my_project')
+      expect(rendered_content).to have_css('div.smart-overflow', text: 'my_project')
     end
   end
 
@@ -108,7 +106,7 @@ RSpec.describe NotificationActionDescriptionComponent, type: :component do
     end
 
     it 'renders a div containing the project and package names' do
-      expect(rendered_content).to have_selector('div.smart-overflow', text: 'my_project_2 / my_package_2')
+      expect(rendered_content).to have_css('div.smart-overflow', text: 'my_project_2 / my_package_2')
     end
   end
 
@@ -124,7 +122,7 @@ RSpec.describe NotificationActionDescriptionComponent, type: :component do
       end
 
       it 'renders a div containing who added the recipient and their new role in the project' do
-        expect(rendered_content).to have_selector('div.smart-overflow', text: 'Jane made you maintainer of some_awesome_project')
+        expect(rendered_content).to have_css('div.smart-overflow', text: 'Jane made you maintainer of some_awesome_project')
       end
     end
 
@@ -139,7 +137,7 @@ RSpec.describe NotificationActionDescriptionComponent, type: :component do
       end
 
       it "renders a div containing who added the recipient's group and their new role in the project" do
-        expect(rendered_content).to have_selector('div.smart-overflow', text: 'Jane made group_1 maintainer of some_awesome_project')
+        expect(rendered_content).to have_css('div.smart-overflow', text: 'Jane made group_1 maintainer of some_awesome_project')
       end
     end
   end
@@ -156,7 +154,7 @@ RSpec.describe NotificationActionDescriptionComponent, type: :component do
       end
 
       it "renders a div containing who removed the recipient's role in the project" do
-        expect(rendered_content).to have_selector('div.smart-overflow', text: 'Jane removed you as maintainer of some_awesome_project')
+        expect(rendered_content).to have_css('div.smart-overflow', text: 'Jane removed you as maintainer of some_awesome_project')
       end
     end
 
@@ -171,8 +169,49 @@ RSpec.describe NotificationActionDescriptionComponent, type: :component do
       end
 
       it "renders a div containing who removed the recipient's group role in the project" do
-        expect(rendered_content).to have_selector('div.smart-overflow', text: 'Jane removed group_1 as maintainer of some_awesome_project')
+        expect(rendered_content).to have_css('div.smart-overflow', text: 'Jane removed group_1 as maintainer of some_awesome_project')
       end
+    end
+  end
+
+  context 'when the notification is for an Event::CreateReport' do
+    context 'with the recipient being a user' do
+      let(:notification) do
+        create(:notification, :create_report, originator: 'user_1', reason: 'Because reasons.')
+      end
+
+      before { render_inline(described_class.new(notification)) }
+
+      it 'renders a div containing who created a report and for what' do
+        expect(rendered_content).to have_css('div.smart-overflow',
+                                             text: "'#{notification.notifiable.user.login}' created a report for a comment. This is the reason:")
+      end
+    end
+  end
+
+  context 'when the notification is for an Event::ClearedDecision' do
+    let(:notification) do
+      create(:notification, :cleared_decision)
+    end
+
+    before { render_inline(described_class.new(notification)) }
+
+    it 'renders the information about the cleared decision' do
+      expect(rendered_content).to have_css('div.smart-overflow',
+                                           text: "'#{notification.notifiable.moderator}' decided to clear the report. This is the reason:")
+    end
+  end
+
+  context 'when the notification is for an Event::FavoredDecision' do
+    let(:notification) do
+      create(:notification, :favored_decision)
+    end
+
+    before { render_inline(described_class.new(notification)) }
+
+    it 'renders the information about the favored decision' do
+      expect(rendered_content).to have_css('div.smart-overflow',
+                                           text: "'#{notification.notifiable.moderator}' decided to favor the report. This is the reason:")
     end
   end
 end

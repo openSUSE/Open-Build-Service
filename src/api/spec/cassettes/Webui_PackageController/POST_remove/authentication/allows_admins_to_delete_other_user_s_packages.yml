@@ -39,8 +39,7 @@ http_interactions:
           <description></description>
           <person userid="tom" role="maintainer"/>
         </project>
-    http_version: null
-  recorded_at: Fri, 29 May 2020 15:37:14 GMT
+  recorded_at: Tue, 26 Sep 2023 14:23:50 GMT
 - request:
     method: put
     uri: http://backend:5352/source/home:admin/_meta?user=admin
@@ -80,8 +79,7 @@ http_interactions:
           <description></description>
           <person userid="admin" role="maintainer"/>
         </project>
-    http_version: null
-  recorded_at: Fri, 29 May 2020 15:37:14 GMT
+  recorded_at: Tue, 26 Sep 2023 14:23:50 GMT
 - request:
     method: put
     uri: http://backend:5352/source/project_3/_meta?user=admin
@@ -89,7 +87,7 @@ http_interactions:
       encoding: UTF-8
       string: |
         <project name="project_3">
-          <title>The Man Within</title>
+          <title>An Acceptable Time</title>
           <description/>
         </project>
     headers:
@@ -111,16 +109,15 @@ http_interactions:
       Connection:
       - close
       Content-Length:
-      - '100'
+      - '104'
     body:
       encoding: UTF-8
       string: |
         <project name="project_3">
-          <title>The Man Within</title>
+          <title>An Acceptable Time</title>
           <description></description>
         </project>
-    http_version: null
-  recorded_at: Fri, 29 May 2020 15:37:14 GMT
+  recorded_at: Tue, 26 Sep 2023 14:23:50 GMT
 - request:
     method: put
     uri: http://backend:5352/source/project_3/forbidden_package/_meta?user=admin
@@ -128,8 +125,8 @@ http_interactions:
       encoding: UTF-8
       string: |
         <package name="forbidden_package" project="project_3">
-          <title>A Farewell to Arms</title>
-          <description>Provident amet voluptas non.</description>
+          <title>What's Become of Waring</title>
+          <description>Aut enim officia quia.</description>
         </package>
     headers:
       Accept-Encoding:
@@ -150,19 +147,18 @@ http_interactions:
       Connection:
       - close
       Content-Length:
-      - '160'
+      - '159'
     body:
       encoding: UTF-8
       string: |
         <package name="forbidden_package" project="project_3">
-          <title>A Farewell to Arms</title>
-          <description>Provident amet voluptas non.</description>
+          <title>What's Become of Waring</title>
+          <description>Aut enim officia quia.</description>
         </package>
-    http_version: null
-  recorded_at: Fri, 29 May 2020 15:37:14 GMT
+  recorded_at: Tue, 26 Sep 2023 14:23:50 GMT
 - request:
     method: delete
-    uri: http://backend:5352/source/project_3/forbidden_package?comment&user=admin
+    uri: http://backend:5352/source/project_3/forbidden_package?user=admin
     body:
       encoding: US-ASCII
       string: ''
@@ -191,6 +187,5 @@ http_interactions:
       string: '<status code="ok" />
 
 '
-    http_version: null
-  recorded_at: Fri, 29 May 2020 15:37:14 GMT
-recorded_with: VCR 5.1.0
+  recorded_at: Tue, 26 Sep 2023 14:23:50 GMT
+recorded_with: VCR 6.2.0

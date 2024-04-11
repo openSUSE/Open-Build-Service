@@ -32,7 +32,7 @@ class AttributeControllerTest < ActionDispatch::IntegrationTest
 
     get '/attribute/OBS'
     assert_response :success
-    count = 23
+    count = 24
     assert_xml_tag tag: 'directory', attributes: { count: count }
     assert_xml_tag children: { count: count }
     assert_xml_tag child: { tag: 'entry', attributes: { name: 'Maintained' } }
@@ -202,7 +202,7 @@ ription</description>
     assert_response :success
     get '/attribute/TEST/Dummy/_meta'
     assert_response :success
-    ['count', 'description', 'default', 'allowed', 'count', 'modifiable_by'].each do |i|
+    %w[count description default allowed count modifiable_by].each do |i|
       assert_equal(Xmlhash.parse(data)[i], Xmlhash.parse(@response.body)[i])
     end
     login_Iggy
@@ -276,7 +276,7 @@ ription</description>
 
     get '/attribute/OBS'
     assert_response :success
-    count = 23
+    count = 24
     assert_xml_tag tag: 'directory', attributes: { count: count }
     assert_xml_tag children: { count: count }
     assert_xml_tag child: { tag: 'entry', attributes: { name: 'Maintained' } }

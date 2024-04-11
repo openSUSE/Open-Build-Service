@@ -6,10 +6,6 @@ module RescueHandler
       render_error status: 400, errorcode: 'invalid_record', message: exception.record.errors.full_messages.join('\n')
     end
 
-    rescue_from Backend::Error do |exception|
-      render_error status: exception.code, errorcode: 'uncaught_exception', message: exception.summary
-    end
-
     rescue_from Timeout::Error do |exception|
       render_error status: 408, errorcode: 'timeout_error', message: exception.message
     end
@@ -34,6 +30,10 @@ module RescueHandler
       render_error status: 403, errorcode: 'invalid_token', message: exception.message
     end
 
+    rescue_from Trigger::Errors::MissingExtractor do |exception|
+      render_error status: 400, errorcode: 'bad_request', message: exception.message
+    end
+
     rescue_from Project::WritePermissionError do |exception|
       render_error status: 403, errorcode: 'modify_project_no_permission', message: exception.message
     end
@@ -42,8 +42,20 @@ module RescueHandler
       render_error status: 403, errorcode: 'modify_package_no_permission', message: exception.message
     end
 
-    rescue_from Backend::NotFoundError, ActiveRecord::RecordNotFound do |exception|
-      render_error message: exception.message, status: 404, errorcode: 'not_found'
+    rescue_from ActiveRecord::RecordNotFound do |exception|
+      render_error message: exception.message, status: 404
+    end
+
+    rescue_from Backend::NotFoundError do |exception|
+      parsed_response = Nokogiri::XML(exception.message).xpath('//summary')
+
+      summary = if parsed_response.present?
+                  parsed_response.first.content
+                else
+                  exception.message
+                end
+
+      render_error message: summary, status: 404
     end
   end
 end

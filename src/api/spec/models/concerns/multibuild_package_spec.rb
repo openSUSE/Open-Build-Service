@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 # Test class
 class TestMultibuildPackage
   include MultibuildPackage
@@ -18,23 +16,23 @@ RSpec.describe MultibuildPackage do
       end
 
       context 'valid multibuild name' do
+        subject { test_class.valid_multibuild_name?(package_name) }
+
         let(:package_name) { 'foo:bar' }
         let(:package_name_validation) do
           Package.valid_name?(package_name, true)
         end
 
-        subject { test_class.valid_multibuild_name?(package_name) }
-
         it { expect(subject).to be_truthy }
       end
 
       context 'invalid multibuild name' do
+        subject { test_class.valid_multibuild_name?(package_name) }
+
         let(:package_name) { 'foo:bar' }
         let(:package_name_validation) do
           Package.valid_name?(package_name, false)
         end
-
-        subject { test_class.valid_multibuild_name?(package_name) }
 
         it { expect(subject).to be_falsey }
       end
@@ -67,8 +65,7 @@ RSpec.describe MultibuildPackage do
     end
 
     before do
-      allow(test_class_instance).to receive(:multibuild?).and_return(true)
-      allow(test_class_instance).to receive(:source_file).and_return(multibuild_xml)
+      allow(test_class_instance).to receive_messages(multibuild?: true, source_file: multibuild_xml)
     end
 
     describe '#multibuild_flavors' do

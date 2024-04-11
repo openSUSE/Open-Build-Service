@@ -1,6 +1,6 @@
 class Webui::Users::NotificationsController < Webui::WebuiController
-  VALID_NOTIFICATION_TYPES = ['read', 'reviews', 'comments', 'requests', 'unread', 'incoming_requests', 'outgoing_requests', 'relationships_created', 'relationships_deleted',
-                              'build_failures'].freeze
+  VALID_NOTIFICATION_TYPES = %w[read reviews comments requests unread incoming_requests outgoing_requests relationships_created relationships_deleted
+                                build_failures reports workflow_runs appealed_decisions].freeze
 
   # TODO: Remove this when we'll refactor kerberos_auth
   before_action :kerberos_auth
@@ -13,6 +13,7 @@ class Webui::Users::NotificationsController < Webui::WebuiController
     @show_read_all_button = show_read_all_button?
     @filtered_project = Project.find_by(name: params[:project])
     @selected_filter = selected_filter
+    @current_user = User.session
   end
 
   def update
@@ -38,7 +39,8 @@ class Webui::Users::NotificationsController < Webui::WebuiController
         render partial: 'update', locals: {
           notifications: paginated_notifications,
           selected_filter: selected_filter,
-          show_read_all_button: show_read_all_button?
+          show_read_all_button: show_read_all_button?,
+          user: User.session
         }
       end
     end

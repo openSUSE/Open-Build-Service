@@ -17,7 +17,16 @@ module Event
       'Event::CommentForPackage' => 'Receive notifications of comments created on a package for which you are...',
       'Event::CommentForRequest' => 'Receive notifications of comments created on a request for which you are...',
       'Event::RelationshipCreate' => "Receive notifications when someone adds you or your group to a project or package with any of these roles: #{Role.local_roles.to_sentence}.",
-      'Event::RelationshipDelete' => "Receive notifications when someone removes you or your group from a project or package with any of these roles: #{Role.local_roles.to_sentence}."
+      'Event::RelationshipDelete' => "Receive notifications when someone removes you or your group from a project or package with any of these roles: #{Role.local_roles.to_sentence}.",
+      'Event::ReportForComment' => 'Receive notifications for reported comments.',
+      'Event::ReportForPackage' => 'Receive notifications for reported packages.',
+      'Event::ReportForProject' => 'Receive notifications for reported projects.',
+      'Event::ReportForUser' => 'Receive notifications for reported users.',
+      'Event::ReportForRequest' => 'Receive notifications for reported requests',
+      'Event::ClearedDecision' => 'Receive notifications for cleared report decisions.',
+      'Event::FavoredDecision' => 'Receive notifications for favored report decisions.',
+      'Event::WorkflowRunFail' => 'Receive notifications for failed workflow runs on SCM/CI integration.',
+      'Event::AppealCreated' => 'Receive notifications when a user appeals against a decision of a moderator.'
     }.freeze
 
     class << self
@@ -33,7 +42,9 @@ module Event
         ['Event::BuildFail', 'Event::ServiceFail', 'Event::ReviewWanted', 'Event::RequestCreate',
          'Event::RequestStatechange', 'Event::CommentForProject', 'Event::CommentForPackage',
          'Event::CommentForRequest',
-         'Event::RelationshipCreate', 'Event::RelationshipDelete'].map(&:constantize)
+         'Event::RelationshipCreate', 'Event::RelationshipDelete',
+         'Event::ReportForComment', 'Event::ReportForPackage', 'Event::ReportForProject', 'Event::ReportForUser', 'Event::ReportForRequest',
+         'Event::WorkflowRunFail', 'Event::AppealCreated', 'Event::ClearedDecision', 'Event::FavoredDecision'].map(&:constantize)
       end
 
       def classnames
@@ -128,7 +139,7 @@ module Event
       na = []
       attribs.keys.each { |k| na << k.to_s }
       logger.debug "LEFT #{self.class.name} payload_keys :#{na.sort.join(', :')}"
-      raise "LEFT #{self.class.name} payload_keys :#{na.sort.join(', :')} # #{attribs.inspect}"
+      raise "Unexpected payload_keys :#{na.sort.join(', :')} (#{attribs.inspect}) provided during '#{self.class.name}' event creation. "
     end
 
     def set_payload(attribs, keys)
@@ -265,6 +276,35 @@ module Event
       bs_request.watched_items.includes(:user).map(&:user)
     end
 
+    def moderators
+      users = User.moderators
+      return users unless users.empty?
+
+      User.admins.or(User.staff)
+    end
+
+    def reporters
+      decision = Decision.find(payload['id'])
+      decision.reports.map(&:user)
+    end
+
+    def offenders
+      decision = Decision.find(payload['id'])
+      reportables = decision.reports.map(&:reportable)
+      reportables.map do |reportable|
+        case reportable
+        when Package, Project
+          reportable.maintainers
+        when User
+          reportable
+        when BsRequest
+          User.find_by(login: reportable.creator)
+        when Comment
+          reportable.user
+        end
+      end
+    end
+
     def _roles(role, project, package = nil)
       return [] unless project
 
@@ -289,6 +329,10 @@ module Event
         notifiable_id: payload['id'],
         created_at: payload['when']&.to_datetime,
         title: subject_to_title }
+    end
+
+    def involves_hidden_project?
+      false
     end
 
     private
@@ -359,7 +403,7 @@ end
 #  id          :bigint           not null, primary key
 #  eventtype   :string(255)      not null, indexed
 #  mails_sent  :boolean          default(FALSE), indexed
-#  payload     :text(65535)
+#  payload     :text(16777215)
 #  undone_jobs :integer          default(0)
 #  created_at  :datetime         indexed
 #  updated_at  :datetime

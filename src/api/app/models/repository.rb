@@ -1,5 +1,5 @@
 class Repository < ApplicationRecord
-  include Status::Checkable
+  include StatusCheckable
 
   belongs_to :project, foreign_key: :db_project_id, inverse_of: :repositories
 
@@ -32,7 +32,7 @@ class Repository < ApplicationRecord
   # Name has to be unique among local repositories and remote_repositories of the associated db_project.
   # Note that remote repositories have to be unique among their remote project (remote_project_name)
   # and the associated db_project.
-  validates :name, uniqueness: { scope: [:db_project_id, :remote_project_name],
+  validates :name, uniqueness: { scope: %i[db_project_id remote_project_name],
                                  case_sensitive: true,
                                  message: '%{value} is already used by a repository of this project' }
   # NOTE: remote_project_name cannot be NULL because mysql UNIQUE KEY constraint does considers
@@ -204,9 +204,9 @@ class Repository < ApplicationRecord
 
   def extended_name
     long_name = project.name.tr(':', '_')
-    if project.repositories.count > 1
+    if project.repositories.count > 1 && !(name == 'standard')
       # keep short names if project has just one repo
-      long_name += '_' + name unless name == 'standard'
+      long_name += "_#{name}"
     end
     long_name
   end
@@ -221,6 +221,20 @@ class Repository < ApplicationRecord
 
   def to_param
     name
+  end
+
+  def check_valid_release_target!(target_repository, architecture_filter = nil)
+    # first architecture must be the same
+    # not using "architectures" here becasue the position is critical
+    unless repository_architectures.first.architecture == target_repository.repository_architectures.first.architecture
+      raise ArchitectureOrderMissmatch, "Repository '#{name}' and releasetarget " \
+                                        "'#{target_repository.name}' have a different architecture as first entry"
+    end
+    repository_architectures.each do |ra|
+      next if architecture_filter.present? && ra.architecture.name != architecture_filter
+
+      raise ArchitectureOrderMissmatch, "Release target repository lacks the architecture #{ra.architecture.name}" unless target_repository.architectures.include?(ra.architecture)
+    end
   end
 
   def is_kiwi_type?
@@ -274,7 +288,7 @@ class Repository < ApplicationRecord
   def download_url(file)
     xml = Xmlhash.parse(Backend::Api::Published.download_url_for_repository(project.name, name))
     url = xml.elements('url').last.to_s
-    url + '/' + file if file.present?
+    "#{url}/#{file}" if file.present?
   end
 
   def is_dod_repository?
@@ -292,7 +306,7 @@ class Repository < ApplicationRecord
   end
 
   def copy_to(new_project)
-    new_repository = deep_clone(include: [:path_elements, :repository_architectures], skip_missing_associations: true)
+    new_repository = deep_clone(include: %i[path_elements repository_architectures], skip_missing_associations: true)
     # DoD repositories require the architecture references to be stored
     new_repository.update!(db_project_id: new_project.id)
     new_repository.download_repositories = download_repositories.map(&:deep_clone)

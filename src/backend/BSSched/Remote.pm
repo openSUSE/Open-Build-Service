@@ -388,7 +388,7 @@ sub addrepo_remote {
   my $cpio;
   my $solvok;
   eval {
-    die('unsupported view\n') unless $remoteproj->{'partition'} || defined($BSConfig::usesolvstate) && $BSConfig::usesolvstate;
+    die('unsupported view\n') unless $remoteproj->{'partition'} || (defined($BSConfig::usesolvstate) && $BSConfig::usesolvstate);
     $param->{'async'}->{'_solvok'} = 1 if $param->{'async'};
     my @args = ('view=solvstate');
     push @args, 'noajax=1' if $remoteproj->{'partition'};
@@ -692,17 +692,9 @@ sub read_gbininfo_remote {
       $packagebinarylist = $ctx->xrpc("bininfo/$prpa", $param, $BSXML::packagebinaryversionlist, "view=binaryversionscode");
     }
   };
-  if ($@) {
-    warn($@);
-    my $error = $@;
-    $error =~ s/\n$//s;
-    ($projid, $repoid) = split('/', $ctx->{'prp'}, 2);
-    $gctx->{'retryevents'}->addretryevent({'type' => 'recheck', 'project' => $projid, 'repository' => $repoid}) if BSSched::RPC::is_transient_error($error);
-    return undef;
-  }
-  return 0 if $packagebinarylist && $param->{'async'};
+  return 0 if !$@ && $packagebinarylist && $param->{'async'};
   my $gbininfo;
-  ($gbininfo, $rpackstatus) = convertpackagebinarylist($gctx, $prpa, $packagebinarylist, undef, undef, $remoteproj->{'partition'} ? 1 : undef);
+  ($gbininfo, $rpackstatus) = convertpackagebinarylist($gctx, $prpa, $packagebinarylist, $@, undef, $remoteproj->{'partition'} ? 1 : undef);
   if ($packstatus && $rpackstatus) {
     $packstatus->{$_} = $rpackstatus->{$_} for keys %$rpackstatus;
     delete $packstatus->{'/users'};
@@ -745,8 +737,15 @@ sub convertpackagebinarylist {
 
   if ($error) {
     chomp $error;
-    warn("$error\n");
     $error ||= 'internal error';
+    warn("$error\n");
+    if ($error =~ /^404/) {
+      my $gbininfo = {};
+      my $rpackstatus = {};
+      update_gbininfo_remote_cache($gctx, $prpa, $gbininfo);
+      update_remotepackstatus_cache($gctx, $prpa, $rpackstatus, $packstatususer);
+      return ($gbininfo, $rpackstatus);
+    }
     if (BSSched::RPC::is_transient_error($error)) {
       my ($projid, $repoid, $arch) = split('/', $prpa, 3);
       $gctx->{'retryevents'}->addretryevent({'type' => 'scanprjbinaries', 'project' => $projid, 'repository' => $repoid, 'arch' => $arch});
@@ -793,6 +792,16 @@ sub convertpackagebinarylist {
   update_gbininfo_remote_cache($gctx, $prpa, $gbininfo, $bininfocookie);
   update_remotepackstatus_cache($gctx, $prpa, $rpackstatus, $packstatususer);
   return ($gbininfo, $rpackstatus);
+}
+
+sub setup_authenticator {
+  require BSSigAuth;
+  for my $authrealm (sort keys %{$BSConfig::signature_auth_keyfile || {}}) {
+    next unless $authrealm =~ /^(.*?)\@/;
+    my $keyfile = $BSConfig::signature_auth_keyfile->{$authrealm};
+    require BSSSHSign if ref $keyfile;
+    $BSRPC::authenticator->{$authrealm} = BSSigAuth::generate_authenticator($1, 'verbose' => 1, 'keyfile' => $keyfile);
+  }
 }
 
 1;

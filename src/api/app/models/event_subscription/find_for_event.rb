@@ -13,7 +13,7 @@ class EventSubscription
 
       event.class.receiver_roles.each do |receiver_role|
         # Find the users/groups who are receivers for this event
-        receivers_before_expand = event.send("#{receiver_role}s")
+        receivers_before_expand = event.send(:"#{receiver_role}s")
         next if receivers_before_expand.blank?
 
         puts "Looking at #{receivers_before_expand.map(&:to_s).join(', ')} for '#{receiver_role}' and channel '#{channel}'" if @debug
@@ -82,6 +82,9 @@ class EventSubscription
     end
 
     def expand_receivers_for_groups(receiver, channel)
+      # RSS subscriptions for groups are not supported
+      return [] if channel == :rss
+
       # We don't split events which come through the web channel, for a group subscriber.
       # They are split in the NotificationService::WebChannel service, if needed.
       return [receiver] if channel == :web || receiver.email.present?

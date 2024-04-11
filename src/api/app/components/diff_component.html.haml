@@ -5,7 +5,25 @@
       .line-container{ id: }
         %div{ class: "line #{line.state}" }>
           - case line.state
-          - when 'comment', 'range'
+          - when 'range'
+            - if target_file
+              = link_to(target_file, title: 'See original file') do
+                .number.p-0.text-center.link-danger<
+                  %i.fas.fa-file-arrow-down
+            - else
+              %a
+                .number
+            - if source_file
+              = link_to(source_file, title: 'See submitted file') do
+                .number.p-0.text-center.link-success<
+                  %i.fas.fa-file-arrow-up
+            - else
+              %a
+                .number
+            .value<
+              .text-muted.ms-3
+                = line.content
+          - when 'comment'
             .offset
               .text-muted.text
                 = line.content
@@ -24,8 +42,9 @@
           .line-comment{ id: "comment#{id}" }
             - if commented_lines.include?(id)
               - commentable.comments.where(diff_ref: id).each do |comment|
-                .comments-thread.p-3
-                  = render BsRequestCommentComponent.new(comment: comment, level: 1, commentable: commentable)
+                .diff-comments
+                  .comments-thread
+                    = render BsRequestCommentComponent.new(comment: comment, level: 1, commentable: commentable)
             - else
               .diff-comments
                 -# rubocop:disable ViewComponent/AvoidGlobalState

@@ -10,7 +10,7 @@
     = f.text_field(:login, readonly: true, class: 'form-control')
   .mb-3
     - role_titles.each do |title|
-      %span.badge.bg-secondary
+      %span.badge.text-bg-secondary
         = title.upcase
   .mb-3
     = f.text_area(:biography, rows: 6, placeholder: 'Biography', maxlength: User::MAX_BIOGRAPHY_LENGTH_ALLOWED, class: 'form-control')
@@ -18,6 +18,10 @@
       %small.form-text#bio-chars-counter
   .mb-3
     = f.text_field(:email, required: true, email: true, placeholder: 'Email', readonly: behind_proxy, class: 'form-control')
+  - if feature_enabled?("color_themes")
+    .mb-3
+      = f.label :color_theme, "Theme"
+      = f.select(:color_theme, options_for_select(User.color_themes.keys), {}, class: 'form-select')
   .mb-3
   - if behind_proxy
     %p

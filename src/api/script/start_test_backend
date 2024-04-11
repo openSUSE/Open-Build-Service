@@ -21,7 +21,7 @@ end
 backendtempdir = ENV.fetch('OBS_BACKEND_TEMP', nil) || "#{Rails.root}/tmp"
 backend_config = "#{backendtempdir}/config#{backend_dir_suffix}"
 backend_data   = "#{backendtempdir}/data#{backend_dir_suffix}"
-require __dir__ + '/../test/test_helper'
+require "#{__dir__}/../test/test_helper"
 
 Backend::Test.do_not_start_test_backend
 
@@ -29,7 +29,7 @@ ENV['PERL5LIB'] = "#{Rails.root}/../backend:#{Rails.root}/../backend/build"
 
 if File.exist?(backend_config)
   puts 'Old backend data is there. checking if we can stop it'
-  ['bs_srcserver', 'bs_repserver', 'bs_servicedispatch', 'bs_service', 'bs_sched', 'bs_publish'].each do |srv|
+  %w[bs_srcserver bs_repserver bs_servicedispatch bs_service bs_sched bs_publish].each do |srv|
     system("cd #{backend_config} && exec ./#{srv} --stop 2>&1 && sleep 2")
   end
 end
@@ -67,7 +67,7 @@ FileUtils.mkdir backend_config
 file = File.open("#{backend_config}/BSConfig.pm", 'w')
 File.open("#{Rails.root}/../backend/BSConfig.pm.template") do |template|
   template.readlines.each do |line|
-    line.gsub!(/our \$ipaccess/, 'our $ipaccess = undef; our $dummy')
+    line.gsub!('our $ipaccess', 'our $ipaccess = undef; our $dummy')
     line.gsub!(/(our \$bsuser)/, '#\1')
     line.gsub!(/(our \$bsgroup)/, '#\1')
     line.gsub!(/(our \$bsserviceuser)/, '#\1')
@@ -76,20 +76,20 @@ File.open("#{Rails.root}/../backend/BSConfig.pm.template") do |template|
     line.gsub!(/.*our \$localarch.*/, 'our $localarch = "x86_64";')
     line.gsub!(/our \$bsdir = .*/, "our $bsdir = '#{backend_data}';")
     line.gsub!(/our \$servicedir = .*/, "our $servicedir = '#{Rails.root}/test/fixtures/backend/services';")
-    line.gsub!(/:5352/, ":#{port_src_server}")
-    line.gsub!(/:5252/, ":#{port_rep_server}") # repservier, used via source server
-    line.gsub!(/:5152/, ":#{port_service_server}") # source service, used via source server
+    line.gsub!(':5352', ":#{port_src_server}")
+    line.gsub!(':5252', ":#{port_rep_server}") # repservier, used via source server
+    line.gsub!(':5152', ":#{port_service_server}") # source service, used via source server
     # hardcode createrepo_c
-    line.gsub!(/#our \$createrepo/, 'our $createrepo')
-    line.gsub!(/#our \$modifyrepo/, 'our $modifyrepo')
+    line.gsub!('#our $createrepo', 'our $createrepo')
+    line.gsub!('#our $modifyrepo', 'our $modifyrepo')
     file.print line
   end
 end
 file.close
 
-['bs_admin', 'bs_srcserver', 'bs_repserver', 'bs_servicedispatch', 'bs_service', 'bs_sched',
- 'bs_publish', 'bs_dispatch', 'bs_productconvert', 'bs_check_consistency', 'bs_mergechanges',
- 'bs_deltastore', 'bs_dodup'].each do |srv|
+%w[bs_admin bs_srcserver bs_repserver bs_servicedispatch bs_service bs_sched
+   bs_publish bs_dispatch bs_productconvert bs_check_consistency bs_mergechanges
+   bs_deltastore bs_dodup].each do |srv|
   FileUtils.symlink("#{Rails.root}/../backend/#{srv}", "#{backend_config}/#{srv}")
   unless system("cd #{backend_config} && exec perl -c ./#{srv} 2>&1")
     puts "ERROR: syntax broken of #{srv}"
@@ -106,7 +106,7 @@ srcsrv = Thread.new do
       line = srcsrv_out.gets
       break if line.nil?
 
-      logger.debug 'bs_srcserver: ' + line.strip unless line.empty?
+      logger.debug "bs_srcserver: #{line.strip}" unless line.empty?
     rescue IOError
       break
     end
@@ -123,7 +123,7 @@ reposrv = Thread.new do
       line = reposrv_out.gets
       break if line.nil?
 
-      logger.debug 'bs_repserver: ' + line.strip unless line.empty?
+      logger.debug "bs_repserver: #{line.strip}" unless line.empty?
     rescue IOError
       break
     end
@@ -165,7 +165,7 @@ servicesrv = Thread.new do
       line = servicesrv_out.gets
       break if line.nil?
 
-      logger.debug 'bs_service: ' + line.strip unless line.empty?
+      logger.debug "bs_service: #{line.strip}" unless line.empty?
     rescue IOError
       break
     end
@@ -197,7 +197,7 @@ while publishsrv_out && !dienow
     line = publishsrv_out.gets
     break if line.nil?
 
-    logger.debug 'bs_publish: ' + line.strip unless line.empty?
+    logger.debug "bs_publish: #{line.strip}" unless line.empty?
   rescue IOError
     break
   end
@@ -216,10 +216,10 @@ until dienow
 end
 
 puts 'Writing config data...'
-Project.all.each do |p|
+Project.find_each do |p|
   Backend::Connection.put("/source/#{CGI.escape(p.name)}/_meta?user=king&comment=fixtures", p.to_axml)
 end
-Package.all.each do |p|
+Package.find_each do |p|
   next if p.name.starts_with?('_product:')
 
   Backend::Connection.put("/source/#{CGI.escape(p.project.name)}/#{CGI.escape(p.name)}/_meta?user=king&comment=fixtures", p.to_axml)
@@ -321,7 +321,7 @@ hri.store
 
 # reindex all sources
 ActiveRecord::Base.transaction(requires_new: true) do
-  Package.all.each(&:sources_changed)
+  Package.find_each(&:sources_changed)
   UpdatePackageMetaJob.new.perform
 end
 

@@ -78,7 +78,7 @@ class BsRequestActionMaintenanceRelease < BsRequestAction
     # patchinfos don't get a link, all others should not conflict with any other
     # FIXME2.4 we have a directory model
     xml = REXML::Document.new(Backend::Api::Sources::Package.files(source_project, source_package))
-    rel = BsRequest.where(state: [:new, :review]).joins(:bs_request_actions)
+    rel = BsRequest.where(state: %i[new review]).joins(:bs_request_actions)
     rel = rel.where(bs_request_actions: { target_project: target_project })
     if xml.elements["/directory/entry/@name='_patchinfo'"]
       rel = rel.where(bs_request_actions: { target_package: target_package })
@@ -119,25 +119,18 @@ class BsRequestActionMaintenanceRelease < BsRequestAction
     self.bs_request_action_accept_info = BsRequestActionAcceptInfo.create(ai)
   end
 
-  def create_post_permissions_hook(opts)
-    object = nil
+  def create_post_permissions_hook
     spkg = Package.find_by_project_and_name(source_project, source_package)
-    if opts[:per_package_locking]
-      # we avoid patchinfo's to be able to complete meta data about the update
-      return if spkg.is_patchinfo?
+    # we avoid patchinfo's to be able to complete meta data about the update
+    return if spkg.is_patchinfo?
 
-      object = spkg
-    else
-      # Workaround: In rails 5 'spkg.project' started to return a readonly object
-      object = Project.find(spkg.project_id)
-    end
-    return if object.enabled_for?('lock', nil, nil)
+    return if spkg.enabled_for?('lock', nil, nil)
 
-    object.check_write_access!(true)
-    f = object.flags.find_by_flag_and_status('lock', 'disable')
-    object.flags.delete(f) if f # remove possible existing disable lock flag
-    object.flags.create(status: 'enable', flag: 'lock')
-    object.store(comment: 'maintenance_release request')
+    spkg.check_write_access!(true)
+    f = spkg.flags.find_by_flag_and_status('lock', 'disable')
+    spkg.flags.delete(f) if f # remove possible existing disable lock flag
+    spkg.flags.create(status: 'enable', flag: 'lock')
+    spkg.store(comment: 'maintenance_release request')
   end
 
   def minimum_priority
@@ -152,6 +145,10 @@ class BsRequestActionMaintenanceRelease < BsRequestAction
     "Release #{uniq_key}"
   end
 
+  def short_name
+    "Release #{source_package}"
+  end
+
   private
 
   def sanity_check!
@@ -162,16 +159,7 @@ class BsRequestActionMaintenanceRelease < BsRequestAction
       raise RepositoryWithoutArchitecture, "Repository has no architecture #{prj.name} / #{repo.name}" if repo.architectures.empty?
 
       repo.release_targets.each do |rt|
-        unless repo.architectures.size == rt.target_repository.architectures.size
-          raise ArchitectureOrderMissmatch, "Repository '#{repo.name}' and releasetarget " \
-                                            "'#{rt.target_repository.name}' have different architectures"
-        end
-        (1..(repo.architectures.size)).each do |i|
-          unless repo.architectures[i - 1] == rt.target_repository.architectures[i - 1]
-            raise ArchitectureOrderMissmatch, "Repository and releasetarget don't have the same architecture " \
-                                              "on position #{i}: #{prj.name} / #{repo.name}"
-          end
-        end
+        repo.check_valid_release_target!(rt.target_repository)
       end
     end
   end

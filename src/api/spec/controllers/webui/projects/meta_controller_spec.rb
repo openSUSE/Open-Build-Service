@@ -1,6 +1,4 @@
-require 'rails_helper'
-
-RSpec.describe Webui::Projects::MetaController, vcr: true do
+RSpec.describe Webui::Projects::MetaController, :vcr do
   let(:user) { create(:confirmed_user, :with_home, login: 'tom') }
 
   describe 'GET #meta' do
@@ -15,12 +13,6 @@ RSpec.describe Webui::Projects::MetaController, vcr: true do
   describe 'POST #update' do
     before do
       login user
-    end
-
-    context 'with a nonexistent project' do
-      let(:post_save_meta) { post :update, params: { project_name: 'nonexistent_project' }, xhr: true }
-
-      it { expect { post_save_meta }.to raise_error(ActiveRecord::RecordNotFound) }
     end
 
     context 'with a valid project' do

@@ -3,8 +3,8 @@ module Webui
     class SubmissionsController < Webui::RequestController
       before_action :require_login
       before_action :strip_params, only: [:create]
-      before_action :set_package
       before_action :set_project
+      before_action :set_package
 
       after_action :verify_authorized
       after_action :supersede_requests, only: [:create]
@@ -36,10 +36,10 @@ module Webui
         params[:bs_request][:bs_request_actions_attributes]['0'].compact_blank!
 
         params.require(:bs_request).permit(:description,
-                                           bs_request_actions_attributes: [:target_package, :target_project,
-                                                                           :source_project, :source_package,
-                                                                           :source_rev, :sourceupdate,
-                                                                           :type])
+                                           bs_request_actions_attributes: %i[target_package target_project
+                                                                             source_project source_package
+                                                                             source_rev sourceupdate
+                                                                             type])
       end
 
       # Superseded requests are marked as such after we're done creating the request superseding them

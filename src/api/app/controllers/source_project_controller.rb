@@ -1,4 +1,6 @@
 class SourceProjectController < SourceController
+  include CheckAndRemoveRepositories
+
   # GET /source/:project
   def show
     project_name = params[:project]
@@ -25,16 +27,18 @@ class SourceProjectController < SourceController
       case params[:view]
       when 'verboseproductlist'
         @products = Product.all_products(@project, params[:expand])
-        render 'source/verboseproductlist'
+        render 'source/verboseproductlist', formats: [:xml]
         return
       when 'productlist'
         @products = Product.all_products(@project, params[:expand])
-        render 'source/productlist'
+        render 'source/productlist', formats: [:xml]
         return
       when 'issues'
         render_project_issues
-      else
+      when 'info'
         pass_to_backend
+      else
+        raise InvalidParameterError, "'#{params[:view]}' is not a valid 'view' parameter value."
       end
       return
     end
@@ -43,8 +47,8 @@ class SourceProjectController < SourceController
   end
 
   def render_project_issues
-    set_issues_default
-    render partial: 'source/project_issues'
+    set_issues_defaults
+    render partial: 'source/project_issues', formats: [:xml]
   end
 
   def render_project_packages
@@ -89,9 +93,9 @@ class SourceProjectController < SourceController
     #--------------------
     required_parameters(:cmd)
 
-    valid_commands = ['undelete', 'showlinked', 'remove_flag', 'set_flag', 'createpatchinfo',
-                      'createkey', 'extendkey', 'copy', 'createmaintenanceincident', 'lock',
-                      'unlock', 'release', 'addchannels', 'modifychannels', 'move', 'freezelink']
+    valid_commands = %w[undelete showlinked remove_flag set_flag createpatchinfo
+                        createkey extendkey copy createmaintenanceincident lock
+                        unlock release addchannels modifychannels move freezelink]
 
     raise IllegalRequest, 'invalid_command' unless valid_commands.include?(params[:cmd])
 
@@ -99,7 +103,7 @@ class SourceProjectController < SourceController
     project_name = params[:project]
     params[:user] = User.session!.login
 
-    return dispatch_command(:project_command, command) if command.in?(['undelete', 'release', 'copy', 'move'])
+    return dispatch_command(:project_command, command) if command.in?(%w[undelete release copy move])
 
     @project = Project.get_by_name(project_name)
 

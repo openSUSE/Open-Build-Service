@@ -15,15 +15,15 @@ class BsRequest < ApplicationRecord
     'bs_request_actions.type'
   ].freeze
 
-  FINAL_REQUEST_STATES = [:accepted, :declined, :superseded, :revoked].freeze
+  FINAL_REQUEST_STATES = %i[accepted declined superseded revoked].freeze
 
-  VALID_REQUEST_STATES = [:new, :deleted, :declined, :accepted, :review, :revoked, :superseded].freeze
+  VALID_REQUEST_STATES = %i[new deleted declined accepted review revoked superseded].freeze
 
-  OBSOLETE_STATES = [:declined, :superseded, :revoked].freeze
+  OBSOLETE_STATES = %i[declined superseded revoked].freeze
 
   ACTION_NOTIFY_LIMIT = 50
 
-  scope :to_accept_by_time, -> { where(state: ['new', 'review']).where('accept_at < ?', Time.now) }
+  scope :to_accept_by_time, -> { where(state: %w[new review]).where('accept_at < ?', Time.now) }
   # Scopes for collections
   scope :with_actions, -> { joins(:bs_request_actions).distinct.order(priority: :asc, id: :desc) }
   scope :with_involved_projects, ->(project_ids) { where(bs_request_actions: { target_project_id: project_ids }) }
@@ -73,6 +73,7 @@ class BsRequest < ApplicationRecord
   has_many :bs_request_actions, dependent: :destroy
   has_many :reviews, dependent: :delete_all
   has_many :comments, as: :commentable, dependent: :destroy
+  has_one :comment_lock, as: :commentable, dependent: :destroy
   has_many :request_history_elements, -> { order(:created_at) }, class_name: 'HistoryElement::Request', foreign_key: :op_object_id
   has_many :review_history_elements, through: :reviews, source: :history_elements
   has_many :status_reports, as: :checkable, class_name: 'Status::Report', dependent: :destroy
@@ -82,11 +83,12 @@ class BsRequest < ApplicationRecord
   has_many :not_accepted_reviews, -> { where.not(state: :accepted) }, class_name: 'Review'
   has_many :notifications, as: :notifiable, dependent: :delete_all
   has_many :watched_items, as: :watchable, dependent: :destroy
+  has_many :reports, as: :reportable, dependent: :nullify
 
   validates :state, inclusion: { in: VALID_REQUEST_STATES }
   validates :creator, presence: true
   validate :check_supersede_state
-  validate :check_creator, on: [:create, :save!]
+  validate :check_creator, on: %i[create save!]
   validates :comment, length: { maximum: 65_535 }
   validates :description, length: { maximum: 65_535 }
   validates :number, uniqueness: true
@@ -97,7 +99,7 @@ class BsRequest < ApplicationRecord
   before_save :assign_number
   after_create :notify
   before_update :send_state_change
-  after_commit :update_cache
+  after_save :update_cache
 
   accepts_nested_attributes_for :bs_request_actions
 
@@ -111,7 +113,7 @@ class BsRequest < ApplicationRecord
     # All types means don't pass 'type'
     opts.delete(:types) if [opts[:types]].flatten.include?('all')
     # Do not allow a full collection to avoid server load
-    raise 'This call requires at least one filter, either by user, project or package' if [:project, :user, :package].all? { |filter| opts[filter].blank? }
+    raise 'This call requires at least one filter, either by user, project or package' if %i[project user package].all? { |filter| opts[filter].blank? }
 
     roles = opts[:roles] || []
     states = opts[:states] || []
@@ -119,7 +121,7 @@ class BsRequest < ApplicationRecord
     # it's wiser to split the queries
     if opts[:project] && roles.empty? && (states.empty? || states.include?('review'))
       (BsRequest.find_for(opts.merge(roles: ['reviewer'])) +
-        BsRequest.find_for(opts.merge(roles: ['target', 'source']))).uniq
+        BsRequest.find_for(opts.merge(roles: %w[target source]))).uniq
     else
       BsRequest.find_for(opts).uniq
     end
@@ -228,6 +230,8 @@ class BsRequest < ApplicationRecord
     request
   end
 
+  # [DEPRECATED] TODO: there is only one instance of the @not_full_diff variable in the request scope which is using this method.
+  # Once request_workflow_redesign beta is rolled out, let's drop this method
   # TODO: refactor this method as soon as the request_show_redesign feature is rolled out.
   # Now it expects an array of action hashes we'll never display more than one action at a time.
   def self.truncated_diffs?(actions)
@@ -251,12 +255,12 @@ class BsRequest < ApplicationRecord
   # Currently only used by staging projects for the obs factories and
   # customized for that.
   def as_json(*)
-    super(except: [:state, :comment, :commenter]).tap do |request_hash|
+    super(except: %i[state comment commenter]).tap do |request_hash|
       request_hash['superseded_by_id'] = superseded_by if has_attribute?(:superseded_by)
-      request_hash['state'] =            state.to_s if has_attribute?(:state)
-      request_hash['request_type'] =     bs_request_actions.first.type
-      request_hash['package'] =          bs_request_actions.first.target_package
-      request_hash['project'] =          bs_request_actions.first.target_project
+      request_hash['state'] = state.to_s if has_attribute?(:state)
+      request_hash['request_type'] = bs_request_actions.first.type
+      request_hash['package'] = bs_request_actions.first.target_package
+      request_hash['project'] = bs_request_actions.first.target_project
     end
   end
 
@@ -501,9 +505,7 @@ class BsRequest < ApplicationRecord
     incident_project = nil # .where(type: 'maintenance_incident')
     bs_request_actions.each do |action|
       source_project = Project.find_by_name(action.source_project)
-      if action.source_project && action.is_maintenance_release?
-        Project::EmbargoHandler.new(source_project).call if source_project.is_a?(Project)
-      end
+      Project::EmbargoHandler.new(source_project).call if action.source_project && action.is_maintenance_release? && source_project.is_a?(Project)
 
       next unless action.is_maintenance_incident?
 
@@ -562,7 +564,7 @@ class BsRequest < ApplicationRecord
       self.superseded_by = opts[:superseded_by]
 
       # check for not accepted reviews on re-open
-      if [:new, :review].include?(state)
+      if %i[new review].include?(state)
         reviews.each do |review|
           next unless review.state != :accepted
 
@@ -625,22 +627,6 @@ class BsRequest < ApplicationRecord
     end
   end
 
-  def approval_handling(new_approver, opts)
-    raise InvalidStateError, 'request is not in review state' unless state == :review
-
-    # check if User.session! is allowed to potentially accept the request
-    # (note: setting the :force key to true will skip some checks but
-    # none of them is supposed to be crucial wrt. permission checking)
-    my_opts = opts.merge(newstate: 'accepted', force: true)
-    checker = BsRequestPermissionCheck.new(self, my_opts)
-    checker.cmd_changestate_permissions(my_opts)
-    check_bs_request_actions!(skip_source: true)
-
-    self.approver = new_approver
-    save!
-  end
-  private :approval_handling
-
   def approve(opts)
     raise InvalidStateError, "already approved by #{approver}" if approver
 
@@ -681,10 +667,10 @@ class BsRequest < ApplicationRecord
     with_lock do
       new_review_state = new_review_state.to_sym
 
-      raise InvalidStateError, 'request is not in a changeable state (new, review or declined)' unless state == :review || (state.in?([:new, :declined]) && new_review_state == :new)
+      raise InvalidStateError, 'request is not in a changeable state (new, review or declined)' unless state == :review || (state.in?(%i[new declined]) && new_review_state == :new)
 
       check_if_valid_review!(opts)
-      raise InvalidStateError, "review state must be new, accepted, declined or superseded, was #{new_review_state}" unless new_review_state.in?([:new, :accepted, :declined, :superseded])
+      raise InvalidStateError, "review state must be new, accepted, declined or superseded, was #{new_review_state}" unless new_review_state.in?(%i[new accepted declined superseded])
 
       old_request_state = state
       review = find_review_for_opts(opts)
@@ -724,25 +710,6 @@ class BsRequest < ApplicationRecord
     raise InvalidReview
   end
 
-  def create_new_review(opts)
-    newreview = reviews.create(
-      reason: opts[:comment],
-      by_user: opts[:by_user],
-      by_group: opts[:by_group],
-      by_project: opts[:by_project],
-      by_package: opts[:by_package],
-      creator: User.session!.login,
-      reviewer: User.session!.login
-    )
-    return newreview if newreview.valid?
-
-    newreview.check_reviewer!
-
-    raise InvalidReview, 'Review invalid: ' + newreview.errors.full_messages.join("\n")
-  end
-
-  private :create_new_review
-
   def addreview(opts)
     with_lock do
       permission_check_addreview!
@@ -769,7 +736,7 @@ class BsRequest < ApplicationRecord
   def setpriority(opts)
     permission_check_setpriority!
 
-    raise SaveError, "Illegal priority '#{opts[:priority]}'" unless opts[:priority].in?(['low', 'moderate', 'important', 'critical'])
+    raise SaveError, "Illegal priority '#{opts[:priority]}'" unless opts[:priority].in?(%w[low moderate important critical])
 
     p = { request: self, user_id: User.session!.id, description_extension: "#{priority} => #{opts[:priority]}" }
     p[:comment] = opts[:comment] if opts[:comment]
@@ -791,7 +758,7 @@ class BsRequest < ApplicationRecord
 
       # use an existing incident
       if tprj.is_maintenance?
-        tprj = Project.get_by_name(action.target_project + ':' + incident.to_s)
+        tprj = Project.get_by_name("#{action.target_project}:#{incident}")
         action.target_project = tprj.name
         action.save!
         touched = true
@@ -860,6 +827,16 @@ class BsRequest < ApplicationRecord
 
   def target_project_name
     bs_request_actions&.first&.target_project.to_s
+  end
+
+  # It is considered an "incident request" if it has at least one maintenance_incident action
+  def maintenance_incident_request?
+    bs_request_actions.where(type: 'maintenance_incident').any?
+  end
+
+  # It is considered a "release request" if it has at least one maintenance_release action
+  def maintenance_release_request?
+    bs_request_actions.where(type: 'maintenance_release').any?
   end
 
   def auto_accept
@@ -942,6 +919,7 @@ class BsRequest < ApplicationRecord
     end
   end
 
+  # [DEPRECATED] TODO: drop this after request_workflow_redesign beta is rolled_out
   def webui_actions(opts = {})
     actions = []
     action_id = opts.delete(:action_id)
@@ -961,12 +939,11 @@ class BsRequest < ApplicationRecord
     oldactions = []
 
     bs_request_actions.each do |action|
-      na, ppl = action.expand_targets(@ignore_build_state.present?, @ignore_delegate.present?)
-      @per_package_locking ||= ppl
-      next if na.nil?
+      new_action = action.expand_targets(@ignore_build_state.present?, @ignore_delegate.present?)
+      next if new_action.nil?
 
       oldactions << action
-      newactions.concat(na)
+      newactions.concat(new_action)
     end
     # will become an empty request
     raise MissingAction if newactions.empty? && oldactions.size == bs_request_actions.size
@@ -1011,6 +988,7 @@ class BsRequest < ApplicationRecord
     FINAL_REQUEST_STATES.include?(state)
   end
 
+  # [DEPRECATED] TODO: drop this after request_workflow_redesign beta is rolled_out
   def action_details(opts = {}, xml:)
     with_diff = opts.delete(:diffs)
     action = { type: xml.action_type }
@@ -1030,8 +1008,7 @@ class BsRequest < ApplicationRecord
     case xml.action_type # All further stuff depends on action type...
     when :submit
       action[:name] = "Submit #{action[:spkg]}"
-      superseded_bs_request_action = xml.find_action_with_same_target(opts[:diff_to_superseded])
-      action[:sourcediff] = xml.webui_infos(opts.merge(superseded_bs_request_action: superseded_bs_request_action)) if with_diff
+      action[:sourcediff] = xml.webui_sourcediff(opts) if with_diff
       creator = User.find_by_login(self.creator)
       target_package = Package.find_by_project_and_name(action[:tprj], action[:tpkg])
       action[:creator_is_target_maintainer] = true if creator.has_local_role?(Role.hashed['maintainer'], target_package)
@@ -1070,9 +1047,7 @@ class BsRequest < ApplicationRecord
                         "Delete #{action[:tprj]}"
                       end
 
-      if action[:tpkg] # API / Backend don't support whole project diff currently
-        action[:sourcediff] = xml.webui_infos if with_diff
-      end
+      action[:sourcediff] = xml.webui_sourcediff if action[:tpkg] && with_diff # API / Backend don't support whole project diff currently
     when :add_role
       action[:name] = 'Add Role'
       action[:role] = xml.role
@@ -1086,10 +1061,10 @@ class BsRequest < ApplicationRecord
       action[:group] = xml.group_name
     when :maintenance_incident
       action[:name] = "Incident #{action[:spkg]}"
-      action[:sourcediff] = xml.webui_infos(superseded_bs_request_action: xml.find_action_with_same_target(opts[:diff_to_superseded])) if with_diff
+      action[:sourcediff] = xml.webui_sourcediff(opts) if with_diff
     when :maintenance_release, :release
       action[:name] = "Release #{action[:spkg]}"
-      action[:sourcediff] = xml.webui_infos(superseded_bs_request_action: xml.find_action_with_same_target(opts[:diff_to_superseded])) if with_diff
+      action[:sourcediff] = xml.webui_sourcediff(opts) if with_diff
     end
 
     if action[:sourcediff]
@@ -1136,7 +1111,7 @@ class BsRequest < ApplicationRecord
   # trigger the create_post_permissions_hook
   def collect_default_reviewers!
     bs_request_actions.map do |action|
-      action.create_post_permissions_hook(per_package_locking: @per_package_locking)
+      action.create_post_permissions_hook
       action.default_reviewers
     end.uniq.flatten
   end
@@ -1150,7 +1125,7 @@ class BsRequest < ApplicationRecord
   # This method checks makes sure this is the case.
   def change_priorities?(new_priority)
     new_priority == 'critical' ||
-      (new_priority == 'important' && priority.in?(['moderate', 'low'])) ||
+      (new_priority == 'important' && priority.in?(%w[moderate low])) ||
       (new_priority == 'moderate' && priority == 'low')
   end
 
@@ -1213,27 +1188,39 @@ class BsRequest < ApplicationRecord
   end
 
   def update_cache
-    target_package_ids = bs_request_actions.with_target_package.pluck(:target_package_id)
-    target_project_ids = bs_request_actions.with_target_project.pluck(:target_project_id)
+    BsRequestCleanTasksCacheJob.perform_later(id)
+  end
 
-    user_ids = Relationship.where(package_id: target_package_ids).or(
-      Relationship.where(project_id: target_project_ids)
-    ).groups.joins(:groups_users).pluck('groups_users.user_id')
+  def approval_handling(new_approver, opts)
+    raise InvalidStateError, 'request is not in review state' unless state == :review
 
-    user_ids += Relationship.where(package_id: target_package_ids).or(
-      Relationship.where(project_id: target_project_ids)
-    ).users.pluck(:user_id)
+    # check if User.session! is allowed to potentially accept the request
+    # (note: setting the :force key to true will skip some checks but
+    # none of them is supposed to be crucial wrt. permission checking)
+    my_opts = opts.merge(newstate: 'accepted', force: true)
+    checker = BsRequestPermissionCheck.new(self, my_opts)
+    checker.cmd_changestate_permissions(my_opts)
+    check_bs_request_actions!(skip_source: true)
 
-    user_ids << User.find_by_login!(creator).id
+    self.approver = new_approver
+    save!
+  end
 
-    # rubocop:disable Rails/SkipsModelValidations
-    # Skipping Model validations in this case is fine as we only want to touch
-    # the associated user models to invalidate the cache keys
-    Group.joins(:relationships).where(relationships: { package_id: target_package_ids }).or(
-      Group.joins(:relationships).where(relationships: { project_id: target_project_ids })
-    ).update_all(updated_at: Time.now)
-    User.where(id: user_ids).update_all(updated_at: Time.now)
-    # rubocop:enable Rails/SkipsModelValidations
+  def create_new_review(opts)
+    newreview = reviews.create(
+      reason: opts[:comment],
+      by_user: opts[:by_user],
+      by_group: opts[:by_group],
+      by_project: opts[:by_project],
+      by_package: opts[:by_package],
+      creator: User.session!.login,
+      reviewer: User.session!.login
+    )
+    return newreview if newreview.valid?
+
+    newreview.check_reviewer!
+
+    raise InvalidReview, "Review invalid: #{newreview.errors.full_messages.join("\n")}"
   end
 end
 

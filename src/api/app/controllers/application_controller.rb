@@ -137,14 +137,12 @@ class ApplicationController < ActionController::Base
                 400
               end
 
-    if @status == 401
-      unless response.headers['WWW-Authenticate']
-        response.headers['WWW-Authenticate'] = if CONFIG['kerberos_mode']
-                                                 'Negotiate'
-                                               else
-                                                 'basic realm="API login"'
-                                               end
-      end
+    if @status == 401 && !response.headers['WWW-Authenticate']
+      response.headers['WWW-Authenticate'] = if CONFIG['kerberos_mode']
+                                               'Negotiate'
+                                             else
+                                               'basic realm="API login"'
+                                             end
     end
     if @status == 404
       @summary ||= 'Not found'
@@ -171,7 +169,7 @@ class ApplicationController < ActionController::Base
       format.json { render json: { errorcode: @errorcode, summary: @summary }, status: @status }
       format.html do
         flash[:error] = "#{@summary} (#{@errorcode})" unless request.env['HTTP_REFERER']
-        redirect_back(fallback_location: root_path)
+        redirect_back_or_to root_path
       end
     end
   end

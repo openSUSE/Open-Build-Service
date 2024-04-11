@@ -1,20 +1,11 @@
-require 'rails_helper'
-
 RSpec.describe Relationship do
   let(:admin_user) { create(:admin_user, login: 'admin') }
   let(:global_role) { create(:role, title: 'global_role', global: true) }
   let(:normal_role) { create(:role, title: 'normal_role', global: false) }
 
-  before do
-    @caching_state = ActionController::Base.perform_caching
-    ActionController::Base.perform_caching = true
-  end
-
-  after do
-    ActionController::Base.perform_caching = @caching_state
-  end
-
   describe '.add_user' do
+    subject { Relationship.add_user(project, user, role, true, true) }
+
     let(:role) { normal_role }
     let(:user) { create(:confirmed_user, :with_home, login: 'other_user') }
     let(:project) { user.home_project }
@@ -22,8 +13,6 @@ RSpec.describe Relationship do
     before do
       login(admin_user)
     end
-
-    subject { Relationship.add_user(project, user, role, true, true) }
 
     context 'with a global role' do
       let(:role) { global_role }
@@ -44,9 +33,9 @@ RSpec.describe Relationship do
     end
 
     context 'with banned user' do
-      let(:nobody) { create(:user_nobody) }
-
       subject { Relationship.add_user(project, nobody, role, true, true) }
+
+      let(:nobody) { create(:user_nobody) }
 
       it { expect { subject }.to raise_error(NotFoundError, "Couldn't find user #{nobody.login}") }
     end
@@ -62,6 +51,8 @@ RSpec.describe Relationship do
   end
 
   describe '.add_group' do
+    subject { Relationship.add_group(project, group, role, true, true) }
+
     let(:role) { normal_role }
     let(:user) { admin_user }
     let(:project) { user.home_project }
@@ -70,8 +61,6 @@ RSpec.describe Relationship do
     before do
       login(admin_user)
     end
-
-    subject { Relationship.add_group(project, group, role, true, true) }
 
     context 'with a global role' do
       let(:role) { global_role }

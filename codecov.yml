@@ -1,5 +1,3 @@
-fixes:
-  - "::src/api/"
 coverage:
   status:
     project:
@@ -7,6 +5,7 @@ coverage:
         target: auto
         base: auto
         threshold: 1
-comment:
-  layout: "reach, diff, flags"
-  require_changes: true
+ignore:
+  - "src/api/lib/tasks/dev/"
+comment: false
+

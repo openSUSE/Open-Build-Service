@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe BsRequestAction::Differ::SourcePackageFinder do
   let!(:user) { create(:confirmed_user, login: 'moi') }
   let!(:source_project) { create(:project, maintainer: user) }
@@ -41,7 +39,7 @@ RSpec.describe BsRequestAction::Differ::SourcePackageFinder do
 
     context 'without a source package but a source project' do
       let(:bs_request) do
-        create(:bs_request_with_maintenance_incident_action,
+        create(:bs_request_with_maintenance_incident_actions,
                source_project: source_project,
                target_project: target_project)
       end
@@ -49,7 +47,7 @@ RSpec.describe BsRequestAction::Differ::SourcePackageFinder do
       let!(:finder) { BsRequestAction::Differ::SourcePackageFinder.new(bs_request_action: bs_request_action) }
 
       context 'and source access' do
-        it { expect(finder.all).to match_array(['another_source_package', 'source_package']) }
+        it { expect(finder.all).to contain_exactly('another_source_package', 'source_package') }
       end
 
       context 'and without source access' do

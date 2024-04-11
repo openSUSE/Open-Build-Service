@@ -73,12 +73,17 @@ if (-S $ARGV[0]) {
     }
     # create slots
     my $lasteventscount = 0;
+    my $lasteventsproxycount = 0;
     my @slots;
     for my $job (@{($ajaxstatus->{'joblist'} || {})->{'job'} || []}) {
       my $id = $job->{'ev'};
       next if $id == $ajaxstatus->{'ev'};
       if ($nolastevents && $job->{'request'} && $job->{'request'} =~ /^GET \/lastevents\?/) {
 	$lasteventscount++;
+	next;
+      }
+      if ($nolastevents && $job->{'request'} && $job->{'request'} =~ /^GET \/lasteventsproxy\?/) {
+	$lasteventsproxycount++;
 	next;
       }
       my $slot = $slots{$id};
@@ -92,10 +97,15 @@ if (-S $ARGV[0]) {
       }
       my $d = $now - $job->{'starttime'};
       my $req = $job->{'request'} || '?';
+      if ($job->{'requestid'}) {
+        my $requestid = ' ['.substr($job->{'requestid'}, 0, 64).']';
+        $req = substr($req, 0, 1014 - length($requestid)).$requestid;
+      }
       my $str = sprintf("%5d %5d %3d %s", $d, $id, $job->{'fd'}, $req);
       $slots[$slot] = substr($str, 0, $cols - 1);
     }
     if ($nolastevents) {
+      unshift @slots, "suppressed lasteventsproxy: $lasteventsproxycount";
       unshift @slots, "suppressed lastevents: $lasteventscount";
     }
     if ($ajaxstatus->{'watcher'}) {
@@ -149,6 +159,8 @@ while(1) {
       $state = 'F';
     } elsif ($state == 2) {
       $state = 'R';
+    } elsif ($state == 3) {
+      $state = 'K';
     } else {
       $state = '?';
     }

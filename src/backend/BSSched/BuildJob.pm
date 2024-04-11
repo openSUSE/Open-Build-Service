@@ -832,10 +832,10 @@ sub addjobhist {
 =cut
 
 sub nextbcnt {
-  my ($ctx, $packid, $pdata) = @_;
+  my ($ctx, $packid, $pdata, $info) = @_;
 
   return undef unless defined $packid;
-  return 1 unless exists $pdata->{'versrel'},;
+  return 1 unless exists $pdata->{'versrel'};
   my $h;
   my $gdst = $ctx->{'gdst'};
   my $relsyncmax = $ctx->{'relsyncmax'};
@@ -846,7 +846,7 @@ sub nextbcnt {
   $h = {'bcnt' => 0} unless $h;
 
   # max with sync data
-  my $tag = $pdata->{'bcntsynctag'} || $packid;
+  my $tag = $pdata->{'bcntsynctag'} || ($info || {})->{'bcntsynctag'} || $packid;
   if ($relsyncmax && $relsyncmax->{"$tag/$pdata->{'versrel'}"}) {
     if ($h->{'bcnt'} + 1 < $relsyncmax->{"$tag/$pdata->{'versrel'}"}) {
       $h->{'bcnt'} = $relsyncmax->{"$tag/$pdata->{'versrel'}"} - 1;
@@ -896,7 +896,7 @@ sub create_jobdata {
   if (defined($packid) && exists($pdata->{'versrel'})) {
     $binfo->{'versrel'} = $pdata->{'versrel'};
     # find the last build count we used for this version/release
-    my $bcnt = nextbcnt($ctx, $packid, $pdata);
+    my $bcnt = nextbcnt($ctx, $packid, $pdata, $info);
     $binfo->{'bcnt'} = $bcnt;
     my $release = $pdata->{'versrel'};
     $release = '0' unless defined $release;
@@ -1019,7 +1019,7 @@ sub create {
   }
 
   my $kiwimode;
-  $kiwimode = $buildtype if $buildtype eq 'kiwi-image' || $buildtype eq 'kiwi-product' || $buildtype eq 'docker' || $buildtype eq 'fissile';
+  $kiwimode = $buildtype if $buildtype eq 'kiwi-image' || $buildtype eq 'kiwi-product' || $buildtype eq 'docker' || $buildtype eq 'fissile' || $buildtype eq 'productcompose';
   my $ccache;
 
   my $syspath;
@@ -1238,6 +1238,9 @@ sub create {
 	$binfo->{'slsadownloadurl'} = $BSConfig::api_url;
       }
     }
+    my $signflavor = $BSConfig::sign_flavor ? $bconf->{'buildflags:signflavor'} : undef;
+    return ('broken', "illegal sign flavor '$signflavor'") if $signflavor && !grep {$_ eq $signflavor} @$BSConfig::sign_flavor;
+    $binfo->{'signflavor'} = $signflavor if $signflavor;
   }
   $ctx->writejob($job, $binfo, $reason);
 
@@ -1340,7 +1343,7 @@ sub metacheck {
     return ('scheduled', [ @$data, { 'explain' => 'retrying bad build' } ]);
   }
   if (join('\n', @meta) eq join('\n', @$new_meta)) {
-    if (($buildtype eq 'kiwi-image' || $buildtype eq 'kiwi-product' || $buildtype eq 'docker') && $ctx->{'relsynctrigger'}->{$packid}) {
+    if (($buildtype eq 'kiwi-image' || $buildtype eq 'kiwi-product' || $buildtype eq 'docker' || $buildtype eq 'productcompose') && $ctx->{'relsynctrigger'}->{$packid}) {
       if ($ctx->{'verbose'}) {
         print "      - $packid ($buildtype)\n";
         print "        rebuild counter sync\n";

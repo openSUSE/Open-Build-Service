@@ -1,4 +1,6 @@
 class SourceProjectMetaController < SourceController
+  include CheckAndRemoveRepositories
+
   validate_action update: { request: :project, response: :status }
   validate_action show: { response: :project }
 
@@ -73,9 +75,9 @@ class SourceProjectMetaController < SourceController
         unless CONFIG['prevent_adding_maintainer_in_project_creation_with_api'].in?([:on, ':on', 'on', 'true', true])
           # FIXME3.0: don't modify send data
           maintainer_role = Role.find_by_title!('maintainer')
-          unless project.relationships.any? { |relationship| relationship.user == User.session! && relationship.role == maintainer_role }
-            project.relationships.find_or_initialize_by(user: User.session!, role: maintainer_role)
-          end
+          project.relationships.find_or_initialize_by(user: User.session!, role: maintainer_role) unless project.relationships.any? do |relationship|
+                                                                                                           relationship.user == User.session! && relationship.role == maintainer_role
+                                                                                                         end
         end
       end
       project.store(comment: params[:comment])

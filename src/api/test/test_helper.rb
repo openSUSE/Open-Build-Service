@@ -16,6 +16,8 @@ require 'rails/test_help'
 
 require 'minitest/unit'
 
+require 'minitest/spec'
+
 require 'webmock/minitest'
 
 require_relative 'node_matcher'
@@ -32,7 +34,11 @@ Capybara.register_driver :rack_test do |app|
   Capybara::RackTest::Driver.new(app, headers: { 'HTTP_ACCEPT' => 'text/html' })
 end
 
-WebMock.disable_net_connect!(allow_localhost: true)
+if ENV['RUNNING_MINITEST_WITH_DOCKER']
+  WebMock.disable_net_connect!(allow: 'backend:5352')
+else
+  WebMock.disable_net_connect!(allow_localhost: true)
+end
 
 unless File.exist?('/proc')
   print 'ERROR: proc file system not mounted, aborting'
@@ -84,9 +90,9 @@ def inject_build_job(project, package, repo, arch, extrabinary = nil)
   f.write(output)
   f.close
   extrabinary = " -o -name #{extrabinary}" if extrabinary
-  # rubocop:disable Layout/LineLength
-  system("cd #{Rails.root}/test/fixtures/backend/binary/; exec find . -name '*#{arch}.rpm' -o -name '*src.rpm' -o -name logfile -o -name _statistics #{extrabinary} | cpio -H newc -o 2>/dev/null | curl -s -X POST -T - 'http://localhost:3201/putjob?arch=#{arch}&code=succeeded&job=#{jobfile.gsub(%r{.*/}, '')}&jobid=#{jobid}' > /dev/null")
-  # rubocop:enable Layout/LineLength
+  system("cd #{Rails.root}/test/fixtures/backend/binary/; exec find . -name '*#{arch}.rpm' -o -name '*src.rpm' -o -name logfile -o -name _statistics #{extrabinary} | " \
+         'cpio -H newc -o 2>/dev/null | ' \
+         "curl -s -X POST -T - 'http://localhost:3201/putjob?arch=#{arch}&code=succeeded&job=#{jobfile.gsub(%r{.*/}, '')}&jobid=#{jobid}' > /dev/null")
   system("echo \"#{verifymd5}  #{package}\" > #{jobfile}:dir/meta")
 end
 
@@ -178,8 +184,6 @@ module Webui
       user = 'king'
       password = 'sunflower'
       opts[:do_assert] = false
-      # no idea why calling it twice would help
-      WebMock.disable_net_connect!(allow_localhost: true)
       visit new_session_path
       within('#loginform') do
         fill_in 'username', with: user
@@ -190,7 +194,7 @@ module Webui
       visit opts[:to] if opts[:to]
 
       @current_user = user
-      assert_match(/^#{user}( |$)/, find(:css, '#link-to-user-home').text) if opts[:do_assert] != false
+      assert_match(/^#{user}( |$)/, find_by_id('link-to-user-home').text) if opts[:do_assert] != false
       # login into API to ease test cases
       prepare_request_with_user(user, password)
     end
@@ -206,7 +210,11 @@ module Webui
       Minitest::Spec.new('MINE') unless Minitest::Spec.current
       Backend::Test.start
       @starttime = Time.now
-      WebMock.disable_net_connect!(allow_localhost: true)
+      if ENV['RUNNING_MINITEST_WITH_DOCKER']
+        WebMock.disable_net_connect!(allow: 'backend:5352')
+      else
+        WebMock.disable_net_connect!(allow_localhost: true)
+      end
       CONFIG['global_write_through'] = true
     end
 

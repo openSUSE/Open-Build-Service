@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe PersonController do
   let(:user) { create(:confirmed_user) }
   let(:admin_user) { create(:admin_user) }
@@ -26,29 +24,29 @@ RSpec.describe PersonController do
         get :get_userinfo, params: { login: user.login }
       end
 
-      it { expect(response.body).to have_selector('person > login', text: user.login) }
-      it { expect(response.body).to have_selector('person > email', text: user.email) }
-      it { expect(response.body).to have_selector('person > realname', text: user.realname) }
-      it { expect(response.body).to have_selector('person > state', text: 'confirmed') }
+      it { expect(response.body).to have_css('person > login', text: user.login) }
+      it { expect(response.body).to have_css('person > email', text: user.email) }
+      it { expect(response.body).to have_css('person > realname', text: user.realname) }
+      it { expect(response.body).to have_css('person > state', text: 'confirmed') }
 
       it 'shows not the ignore_auth_services flag' do
-        expect(response.body).to have_selector('person > ignore_auth_services', text: user.ignore_auth_services, count: 0)
+        expect(response.body).to have_css('person > ignore_auth_services', text: user.ignore_auth_services, count: 0)
       end
     end
 
     context 'called by an admin' do
       before do
-        login user
+        login admin_user
         get :get_userinfo, params: { login: user.login }
       end
 
-      it { expect(response.body).to have_selector('person > login', text: user.login) }
-      it { expect(response.body).to have_selector('person > email', text: user.email) }
-      it { expect(response.body).to have_selector('person > realname', text: user.realname) }
-      it { expect(response.body).to have_selector('person > state', text: 'confirmed') }
+      it { expect(response.body).to have_css('person > login', text: user.login) }
+      it { expect(response.body).to have_css('person > email', text: user.email) }
+      it { expect(response.body).to have_css('person > realname', text: user.realname) }
+      it { expect(response.body).to have_css('person > state', text: 'confirmed') }
 
       it 'shows not the ignore_auth_services flag' do
-        expect(response.body).to have_selector('person > ignore_auth_services', text: user.ignore_auth_services, count: 0)
+        expect(response.body).to have_css('person > ignore_auth_services', text: user.ignore_auth_services, count: 0)
       end
     end
   end
@@ -131,12 +129,12 @@ RSpec.describe PersonController do
     end
 
     context 'when in LDAP mode' do
+      subject { put :put_userinfo, params: { login: user.login, format: :xml } }
+
       before do
         stub_const('CONFIG', CONFIG.merge('ldap_mode' => :on))
         request.env['RAW_POST_DATA'] = xml
       end
-
-      subject { put :put_userinfo, params: { login: user.login, format: :xml } }
 
       context 'as an admin' do
         before do
@@ -160,9 +158,9 @@ RSpec.describe PersonController do
     context 'when in LDAP mode' do
       before do
         stub_const('CONFIG', CONFIG.merge('ldap_mode' => :on))
-      end
 
-      subject! { post :register }
+        post :register
+      end
 
       it 'sets an error code' do
         expect(response.header['X-Opensuse-Errorcode']).to eq('permission_denied')
@@ -175,9 +173,9 @@ RSpec.describe PersonController do
       context 'when in LDAP mode' do
         before do
           stub_const('CONFIG', CONFIG.merge('ldap_mode' => :on))
-        end
 
-        subject! { post :command, params: { cmd: 'register' } }
+          post :command, params: { cmd: 'register' }
+        end
 
         it 'sets an error code' do
           expect(response.header['X-Opensuse-Errorcode']).to eq('permission_denied')
@@ -207,9 +205,9 @@ RSpec.describe PersonController do
         user.watched_items.create(watchable: package)
         user.watched_items.create(watchable: delete_request)
         login user
-      end
 
-      subject! { get :get_watchlist, params: { login: user.login } }
+        get :get_watchlist, params: { login: user.login }
+      end
 
       it 'returns watchlist' do
         expect(Xmlhash.parse(response.body)).to eq(Xmlhash.parse(xml))

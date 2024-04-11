@@ -1,7 +1,6 @@
-require 'rails_helper'
 require 'gssapi'
 
-RSpec.describe 'Kerberos login', vcr: false do
+RSpec.describe 'Kerberos login' do
   describe 'authentication in kerberos mode' do
     let(:user) { create(:confirmed_user) }
 

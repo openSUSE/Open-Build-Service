@@ -1,6 +1,4 @@
-require 'rails_helper'
-
-RSpec.describe StatusProjectController, vcr: true do
+RSpec.describe StatusProjectController, :vcr do
   render_views
 
   describe 'GET #show' do
@@ -36,7 +34,7 @@ RSpec.describe StatusProjectController, vcr: true do
 
     context 'with failures' do
       before do
-        allow_any_instance_of(ProjectStatus::PackInfo).to receive(:fails).and_return([['repo', 'arch', 'time', 'md5']])
+        allow_any_instance_of(ProjectStatus::PackInfo).to receive(:fails).and_return([%w[repo arch time md5]])
         login(admin_user)
         get :show, params: { project: project.name, format: :xml }
       end

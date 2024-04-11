@@ -5,7 +5,11 @@ module NotificationService
       'BsRequest' => OutdatedNotificationsFinder::BsRequest,
       'Comment' => OutdatedNotificationsFinder::Comment,
       'Project' => OutdatedNotificationsFinder::Project,
-      'Package' => OutdatedNotificationsFinder::Package
+      'Package' => OutdatedNotificationsFinder::Package,
+      'Report' => OutdatedNotificationsFinder::Report,
+      'Decision' => OutdatedNotificationsFinder::Decision,
+      'Appeal' => OutdatedNotificationsFinder::Appeal,
+      'WorkflowRun' => OutdatedNotificationsFinder::WorkflowRun
     }.freeze
 
     def initialize(subscription, event)

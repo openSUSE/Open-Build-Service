@@ -13,10 +13,9 @@ module OBSApi
       # request#12345 links
       fulldoc.gsub!(/(sr|req|request)#(\d+)/i) { |s| "[#{s}](#{request_show_url(number: Regexp.last_match(2))})" }
       # @user links
-      fulldoc.gsub!(/([^\w]|^)@(\b[-.\w]+\b)(?:\b|$)/) \
-                   { "#{Regexp.last_match(1)}[@#{Regexp.last_match(2)}](#{user_url(Regexp.last_match(2))})" }
+      fulldoc.gsub!(/([^\w]|^)@(\b[-.\+\w]+\b)(?:\b|$)/) { "#{Regexp.last_match(1)}[@#{Regexp.last_match(2)}](#{user_url(Regexp.last_match(2))})" }
       # bnc#12345 links
-      IssueTracker.all.each do |t|
+      IssueTracker.find_each do |t|
         fulldoc = t.get_markdown(fulldoc)
       end
       fulldoc
@@ -24,7 +23,7 @@ module OBSApi
 
     def block_html(raw_html)
       # sanitize the HTML we get
-      scrubber = Rails::Html::PermitScrubber.new.tap { |a| a.tags = ['b', 'em', 'i', 'strong', 'u', 'pre'] }
+      scrubber = Rails::Html::PermitScrubber.new.tap { |a| a.tags = %w[b em i strong u pre] }
       Rails::Html::SafeListSanitizer.new.sanitize(raw_html, scrubber: scrubber)
     end
 

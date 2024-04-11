@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe ParsePackageDiff do
   let(:instance_with_parse_package_diff_support) do
     fake_instance = double('Fake Instance with ParsePackageDiff')
@@ -9,6 +7,8 @@ RSpec.describe ParsePackageDiff do
 
   describe '#sorted_filenames_from_sourcediff' do
     context 'with one file' do
+      subject { instance_with_parse_package_diff_support.sorted_filenames_from_sourcediff(package_diff).first }
+
       let(:filename) { 'my_filename' }
       let(:package_diff) do
         "<sourcediff key='461472c75f0df9421a89f528417e72eb'>
@@ -25,8 +25,6 @@ RSpec.describe ParsePackageDiff do
           </issues>
         </sourcediff>"
       end
-
-      subject { instance_with_parse_package_diff_support.sorted_filenames_from_sourcediff(package_diff).first }
 
       it 'contains the old filename' do
         result = { 'project' => 'home:Admin', 'package' => 'test', 'rev' => '4', 'srcmd5' => '61c8de91f59df43c9ffd1fa9b4a3f055' }
@@ -46,6 +44,8 @@ RSpec.describe ParsePackageDiff do
     end
 
     context 'with more than one file' do
+      subject { instance_with_parse_package_diff_support.sorted_filenames_from_sourcediff(package_diff).first }
+
       let(:package_diff) do
         '<sourcediff key="461472c75f0df9421a89f528417e72eb">
           <old project="home:Admin" package="test" rev="4" srcmd5="61c8de91f59df43c9ffd1fa9b4a3f055" />
@@ -84,8 +84,6 @@ RSpec.describe ParsePackageDiff do
         </sourcediff>'
       end
 
-      subject { instance_with_parse_package_diff_support.sorted_filenames_from_sourcediff(package_diff).first }
-
       it 'orders the filenames by type' do
         # changes files, spec files, patch files followed by all other files
         expect(subject['filenames']).to eq(['aa.changes', 'bb.changes', 'aa.spec', 'bb.spec', 'aa.patch', 'bb.dif', 'cc.diff', 'aa_file', 'bb_file'])
@@ -93,43 +91,33 @@ RSpec.describe ParsePackageDiff do
     end
 
     context 'with issues' do
+      subject { instance_with_parse_package_diff_support.sorted_filenames_from_sourcediff(package_diff).first['issues'] }
+
       let!(:package_diff) do
-        "<sourcediff key='461472c75f0df9421a89f528417e72eb'>
-          <old project='home:Admin' package='test' rev='4' srcmd5='61c8de91f59df43c9ffd1fa9b4a3f055' />
-          <new project='home:Admin' package='test' rev='5' srcmd5='ca37dc90f6fd88f63db2ac9f1fc5c41c' />
-          <files>
-          </files>
-          <issues>
-            <issue>
-              <name>#{issue.name}</name>
-              <tracker>#{issue_tracker.name}</tracker>
-              <label>#{issue.label}</label>
-            </issue>
-            <issue>
-              <name>#{deleted_issue.name}</name>
-              <tracker>#{issue_tracker.name}</tracker>
-              <label>#{deleted_issue.label}</label>
-              <state>deleted</state>
-            </issue>
-            <issue>
-              <tracker>without name</tracker>
-              <label>empty</label>
-            </issue>
-          </issues>
-        </sourcediff>"
+        <<~XML
+          <sourcediff key='461472c75f0df9421a89f528417e72eb'>
+            <old project='home:Admin' package='test' rev='4' srcmd5='61c8de91f59df43c9ffd1fa9b4a3f055' />
+            <new project='home:Admin' package='test' rev='5' srcmd5='ca37dc90f6fd88f63db2ac9f1fc5c41c' />
+            <files>
+            </files>
+            <issues>
+              <issue name="#{issue.name}" tracker="#{issue_tracker.name}" label="#{issue.label}" />
+              <issue name="#{deleted_issue.name}" tracker="#{issue_tracker.name}" label="#{deleted_issue.label}" state="deleted" />
+              <issue tracker="without name" label="empty" />
+            </issues>
+          </sourcediff>
+        XML
       end
 
       let(:issue_tracker) { IssueTracker.first }
       let(:issue) { create(:issue, issue_tracker: issue_tracker) }
       let(:deleted_issue) { create(:issue, name: 1234, issue_tracker: issue_tracker) }
 
-      subject { instance_with_parse_package_diff_support.sorted_filenames_from_sourcediff(package_diff).first['issues'] }
-
       it { expect(subject[issue.label][:name]).to eq(issue.name) }
       it { expect(subject[issue.label][:tracker]).to eq(issue_tracker.name) }
 
       it { expect(subject[:empty]).to be_nil }
-      it { expect(subject[deleted_issue.label]).to be_nil }
+      it { expect(subject[deleted_issue.label][:name]).to eq(deleted_issue.name) }
     end
   end
 end

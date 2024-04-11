@@ -1,10 +1,4 @@
-require 'rails_helper'
-
-# WARNING: Some tests require real backend answers, so make sure you uncomment
-# this line and start a test backend.
-# CONFIG['global_write_through'] = true
-
-RSpec.describe Webui::Kiwi::ImagesController, vcr: true do
+RSpec.describe Webui::Kiwi::ImagesController, :vcr do
   let(:project) { create(:project, name: 'fake_project') }
   let(:user) { create(:confirmed_user, :with_home, login: 'tom') }
   let(:kiwi_image_with_package_with_kiwi_file) do
@@ -52,10 +46,10 @@ RSpec.describe Webui::Kiwi::ImagesController, vcr: true do
           get :import_from_package, params: { package_id: package_with_kiwi_file.id }
         end
 
-        it 'redirect to package_view_file_path' do
-          expect(response).to redirect_to(package_view_file_path(project: package_with_kiwi_file.project,
-                                                                 package: package_with_kiwi_file,
-                                                                 filename: "#{package_with_kiwi_file.name}.kiwi"))
+        it 'redirect to project_package_file_path' do
+          expect(response).to redirect_to(project_package_file_path(project_name: package_with_kiwi_file.project,
+                                                                    package_name: package_with_kiwi_file,
+                                                                    filename: "#{package_with_kiwi_file.name}.kiwi"))
         end
 
         it { expect(flash[:error]).not_to be_nil }
@@ -97,10 +91,10 @@ RSpec.describe Webui::Kiwi::ImagesController, vcr: true do
             get :import_from_package, params: { package_id: package_with_kiwi_file.id }
           end
 
-          it 'redirect to package_view_file_path' do
-            expect(response).to redirect_to(package_view_file_path(project: package_with_kiwi_file.project,
-                                                                   package: package_with_kiwi_file,
-                                                                   filename: "#{package_with_kiwi_file.name}.kiwi"))
+          it 'redirect to project_package_file_path' do
+            expect(response).to redirect_to(project_package_file_path(project_name: package_with_kiwi_file.project,
+                                                                      package_name: package_with_kiwi_file,
+                                                                      filename: "#{package_with_kiwi_file.name}.kiwi"))
           end
 
           it { expect(flash[:error]).to eq(errors) }
@@ -131,10 +125,10 @@ RSpec.describe Webui::Kiwi::ImagesController, vcr: true do
             get :import_from_package, params: { package_id: package_with_kiwi_file.id }
           end
 
-          it 'redirect to package_view_file_path' do
-            expect(response).to redirect_to(package_view_file_path(project: package_with_kiwi_file.project,
-                                                                   package: package_with_kiwi_file,
-                                                                   filename: "#{package_with_kiwi_file.name}.kiwi"))
+          it 'redirect to project_package_file_path' do
+            expect(response).to redirect_to(project_package_file_path(project_name: package_with_kiwi_file.project,
+                                                                      package_name: package_with_kiwi_file,
+                                                                      filename: "#{package_with_kiwi_file.name}.kiwi"))
           end
 
           it { expect(flash[:error]).to match_array(errors) }
@@ -173,6 +167,8 @@ RSpec.describe Webui::Kiwi::ImagesController, vcr: true do
     end
 
     context 'with invalid repositories data' do
+      subject! { post :update, params: invalid_repositories_update_params }
+
       let(:invalid_repositories_update_params) do
         {
           id: kiwi_image_with_package_with_kiwi_file.id,
@@ -196,8 +192,6 @@ RSpec.describe Webui::Kiwi::ImagesController, vcr: true do
           title: 'Cannot update KIWI Image:'
         }
       end
-
-      subject! { post :update, params: invalid_repositories_update_params }
 
       it { expect(subject.request.flash[:error]).to eq(errors) }
       it { expect(subject).to have_http_status(:success) }
@@ -263,6 +257,8 @@ RSpec.describe Webui::Kiwi::ImagesController, vcr: true do
     end
 
     context 'with invalid package: empty name' do
+      subject { post :update, params: invalid_packages_update_params }
+
       let(:invalid_packages_update_params) do
         {
           id: kiwi_image_with_package_with_kiwi_file.id,
@@ -289,8 +285,6 @@ RSpec.describe Webui::Kiwi::ImagesController, vcr: true do
           title: 'Cannot update KIWI Image:'
         }
       end
-
-      subject { post :update, params: invalid_packages_update_params }
 
       it { expect(subject.request.flash[:error]).to eq(errors) }
       it { expect(subject).to have_http_status(:success) }
@@ -330,9 +324,13 @@ RSpec.describe Webui::Kiwi::ImagesController, vcr: true do
   end
 
   describe 'GET #autocomplete_binaries' do
+    subject do
+      get :autocomplete_binaries, params: { format: :json, id: kiwi_image_with_package_with_kiwi_file.id, term: term }
+    end
+
     let(:binaries_available_sample) do
-      { 'apache' => ['i586', 'x86_64'], 'apache2' => ['x86_64'],
-        'appArmor' => ['i586', 'x86_64'], 'bcrypt' => ['x86_64'] }
+      { 'apache' => %w[i586 x86_64], 'apache2' => ['x86_64'],
+        'appArmor' => %w[i586 x86_64], 'bcrypt' => ['x86_64'] }
     end
 
     let(:term) { '' }
@@ -340,10 +338,6 @@ RSpec.describe Webui::Kiwi::ImagesController, vcr: true do
     before do
       login user
       allow(Kiwi::Image).to receive(:binaries_available).and_return(binaries_available_sample)
-    end
-
-    subject do
-      get :autocomplete_binaries, params: { format: :json, id: kiwi_image_with_package_with_kiwi_file.id, term: term }
     end
 
     it { expect(subject.media_type).to eq('application/json') }

@@ -1,11 +1,12 @@
 class Workflow::Step::SetFlags < Workflow::Step
   REQUIRED_KEYS = [:flags].freeze
-  REQUIRED_FLAG_KEYS = [:type, :status, :project].freeze
-  OPTIONAL_FLAG_KEYS = [:package, :repository, :architecture].freeze
+  REQUIRED_FLAG_KEYS = %i[type status project].freeze
+  OPTIONAL_FLAG_KEYS = %i[package repository architecture].freeze
 
   validate :validate_flags
 
   def call
+    return if scm_webhook.closed_merged_pull_request? || scm_webhook.reopened_pull_request?
     return unless valid?
 
     set_flags
@@ -21,16 +22,19 @@ class Workflow::Step::SetFlags < Workflow::Step
     ActiveRecord::Base.transaction do
       flags.each do |flag|
         main_object = project_or_package(flag)
-        check_access(main_object)
+        Pundit.authorize(token.executor, main_object, :update?)
+
         architecture_id = Architecture.find_by_name(flag[:architecture]).id if flag[:architecture]
         existing_flag = main_object.flags.find_by(flag: flag[:type], repo: flag[:repository], architecture_id: architecture_id)
 
-        # We have to update the flag status if the flag already exist and only the status differs
-        existing_flag.update!(status: flag[:status]) if existing_flag.present? && existing_flag.status != flag[:status]
-        next if existing_flag.present?
+        next if existing_flag.present? && existing_flag.status == flag[:status]
 
-        main_object.add_flag(flag[:type], flag[:status], flag[:repository], flag[:architecture])
-        main_object.save!
+        if existing_flag.present?
+          existing_flag.update!(status: flag[:status])
+        else
+          main_object.add_flag(flag[:type], flag[:status], flag[:repository], flag[:architecture])
+        end
+        main_object.store(comment: 'SCM/CI integration, set_flags step')
       end
     end
   end
@@ -39,10 +43,6 @@ class Workflow::Step::SetFlags < Workflow::Step
     project = Project.find_by!(name: target_project_name(project_name: flag[:project]))
     package = project.packages.find_by(name: target_package_name(package_name: flag[:package])) if flag[:package].present?
     package.presence || project
-  end
-
-  def check_access(object)
-    raise Pundit::NotAuthorizedError unless Pundit.policy(token.executor, object).update?
   end
 
   def validate_flags
@@ -58,11 +58,7 @@ class Workflow::Step::SetFlags < Workflow::Step
 
     return nil unless scm_webhook.pull_request_event?
 
-    pr_subproject_name = if scm_webhook.payload[:scm] == 'github'
-                           scm_webhook.payload[:target_repository_full_name]&.tr('/', ':')
-                         else
-                           scm_webhook.payload[:path_with_namespace]&.tr('/', ':')
-                         end
+    pr_subproject_name = scm_webhook.payload[:target_repository_full_name]&.tr('/', ':')
 
     "#{project_name}:#{pr_subproject_name}:PR-#{scm_webhook.payload[:pr_number]}"
   end

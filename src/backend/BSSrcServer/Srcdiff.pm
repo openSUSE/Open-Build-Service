@@ -1330,13 +1330,9 @@ sub issues {
   }
 }
 
-sub issuediff {
-  my ($pold, $old, $pnew, $new, %opts) = @_;
-
-  my $trackers = $opts{'trackers'};
-  return [] unless @{$trackers || []};
-
-  $trackers = [ @$trackers ];
+sub preparetrackers {
+  my ($trackers) = @_;
+  $trackers = [ @{$trackers || []} ];
   for (@$trackers) {
     $_ = { %$_ };
     $_->{'regex'} = "($_->{'regex'})" unless $_->{'regex'} =~ /\(/;
@@ -1349,6 +1345,28 @@ sub issuediff {
       $_->{'regex'} = qr/___this_reGExp_does_NOT_match___/;
     }
   }
+  return $trackers;
+}
+
+sub finalizeissues {
+  for my $issue (@_) {
+    my $tracker = $issue->{'tracker'};
+    my $url = $tracker->{'show-url'};
+    if ($url) {
+      $url =~ s/\@\@\@/$issue->{'name'}/g;
+      $issue->{'url'} = $url;
+    }
+    $issue->{'tracker'} = $tracker->{'name'};
+  }
+}
+
+sub issuediff {
+  my ($pold, $old, $pnew, $new, %opts) = @_;
+
+  my $trackers = $opts{'trackers'};
+  return [] unless @{$trackers || []};
+
+  $trackers = preparetrackers($trackers);
 
   my %oldchanges;
   my %newchanges;
@@ -1364,6 +1382,7 @@ sub issuediff {
   }
   my %oldissues;
   my %newissues;
+  my %keptissues;
   for my $c (keys %oldchanges) {
     next if exists $newchanges{$c};
     issues($oldchanges{$c}, $trackers, \%oldissues);
@@ -1372,11 +1391,17 @@ sub issuediff {
     next if exists $oldchanges{$c};
     issues($newchanges{$c}, $trackers, \%newissues);
   }
+  if (%oldissues || %newissues) {
+    for my $c (keys %oldchanges) {
+      next unless exists $newchanges{$c};
+      issues($oldchanges{$c}, $trackers, \%keptissues);
+    }
+  }
   my @added;
   my @changed;
   my @deleted;
   for (sort keys %newissues) {
-    if (exists $oldissues{$_}) {
+    if (exists($oldissues{$_}) || exists($keptissues{$_})) {
       $newissues{$_}->{'state'} = 'changed';
       delete $oldissues{$_};
       push @changed, $newissues{$_};
@@ -1386,18 +1411,15 @@ sub issuediff {
     }
   }
   for (sort keys %oldissues) {
-    $oldissues{$_}->{'state'} = 'deleted';
-    push @deleted , $oldissues{$_};
-  }
-  for my $issue (@changed, @added, @deleted) {
-    my $tracker = $issue->{'tracker'};
-    my $url = $tracker->{'show-url'};
-    if ($url) {
-      $url =~ s/\@\@\@/$issue->{'name'}/g;
-      $issue->{'url'} = $url;
+    if (exists($keptissues{$_})) {
+      $oldissues{$_}->{'state'} = 'changed';
+      push @changed, $oldissues{$_};
+    } else {
+      $oldissues{$_}->{'state'} = 'deleted';
+      push @deleted , $oldissues{$_};
     }
-    $issue->{'tracker'} = $tracker->{'name'};
   }
+  finalizeissues(@changed, @added, @deleted);
   return [ @changed, @added, @deleted ];
 }
 

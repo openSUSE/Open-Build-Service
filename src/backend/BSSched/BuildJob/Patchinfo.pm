@@ -22,6 +22,7 @@ use Digest::MD5 ();
 
 use BSUtil;
 use BSSched::BuildJob;
+use BSSched::ProjPacks;		# for orderpackids
 use BSXML;
 use Build;			# for query
 use BSVerify;			# for verify_nevraquery
@@ -109,10 +110,14 @@ sub check {
   my $myarch = $gctx->{'arch'};
   my @archs = @{$repo->{'arch'}};
   return ('broken', 'missing archs') unless @archs;     # can't happen
-  my $buildarch = $archs[0];    # always build in first arch
+  my $patchinfo = $pdata->{'patchinfo'};
+  if (exists $patchinfo->{'seperate_build_arch'}) {
+    # build on all schedulers, but don't take content from each other
+    @archs = ($myarch);
+  };
+  my $buildarch = $archs[0];
   my $reporoot = $gctx->{'reporoot'};
   my $markerdir = "$reporoot/$prp/$buildarch/$packid";
-  my $patchinfo = $pdata->{'patchinfo'};
   my $projpacks = $gctx->{'projpacks'};
   my $proj = $projpacks->{$projid} || {};
 
@@ -147,10 +152,9 @@ sub check {
   } else {
     my $pdatas = $proj->{'package'} || {};
     @packages = grep {!$pdatas->{$_}->{'aggregatelist'} && !$pdatas->{$_}->{'patchinfo'}} sort keys %$pdatas;
+    @packages = BSSched::ProjPacks::orderpackids($proj, @packages);
   }
-  if (!@packages && !$broken) {
-    $broken = 'no packages found';
-  }
+  $broken = 'no packages found' if !@packages && !$broken;
 
   if ($buildarch ne $myarch) {
     # XXX wipe just in case! remove when we do that elsewhere...
@@ -223,6 +227,13 @@ sub check {
       print "        nothing changed\n";
       return ('done');
     }
+  }
+
+  # architecture ordering magic: if the first arch is 'local', order reverse lexicographically
+  if ($archs[0] eq 'local') {
+    shift @archs;
+    @archs = sort {$b cmp $a} @archs;
+    unshift @archs, 'local';
   }
 
   # collect em
@@ -454,6 +465,7 @@ sub build {
   }
 
   my %supportstatus;
+  my %superseded_by;
   my $target;
   my $firstissued = ($updateinfodata || {})->{'firstissued'} || $now;
 
@@ -619,6 +631,10 @@ sub build {
         next unless $ci->{'supportstatus'};
         $upd->{'supportstatus'} = $ci->{'supportstatus'};
         $supportstatus{$bin} = $ci->{'supportstatus'};
+        if ($ci->{'superseded_by'}) {
+          $upd->{'superseded_by'} = $ci->{'superseded_by'};
+          $superseded_by{$bin} = $ci->{'superseded_by'};
+        }
       }
     }
     $metas{$mpackid} = Digest::MD5::md5_hex($m) if $ptype eq 'binary';
@@ -712,7 +728,10 @@ sub build {
   };
   $update->{'pkglist'} = {'collection' => [ $col ] };
   $update->{'patchinforef'} = "$projid/$packid";        # deleted in publisher...
-  writexml("$jobdatadir/updateinfo.xml", undef, {'update' => [$update]}, $BSXML::updateinfo);
+  if ($category ne 'no_updateinfo') {
+    writexml("$jobdatadir/updateinfo.xml", undef, {'update' => [$update]}, $BSXML::updateinfo);
+    $bininfo->{'updateinfo.xml'} = genbininfo($jobdatadir, 'updateinfo.xml');
+  };
   writestr("$jobdatadir/logfile", undef, "update built succeeded ".localtime($now)."\n");
   $updateinfodata = {
     'packages' => \@tocopy,
@@ -721,6 +740,7 @@ sub build {
     'firstissued' => $firstissued,
   };
   $updateinfodata->{'supportstatus'} = \%supportstatus if %supportstatus;
+  $updateinfodata->{'superseded_by'} = \%superseded_by if %superseded_by;
   $updateinfodata->{'filtered'} = \%filtered if %filtered;
   $updateinfodata->{'target'} = $target if $target;
   BSUtil::store("$jobdatadir/.updateinfodata", undef, $updateinfodata);

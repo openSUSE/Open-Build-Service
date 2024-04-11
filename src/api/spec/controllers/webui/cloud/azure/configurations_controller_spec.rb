@@ -1,6 +1,4 @@
-require 'rails_helper'
-
-RSpec.describe Webui::Cloud::Azure::ConfigurationsController, vcr: true do
+RSpec.describe Webui::Cloud::Azure::ConfigurationsController, :vcr do
   let(:user) { create(:confirmed_user, login: 'tom') }
 
   describe 'GET #show' do

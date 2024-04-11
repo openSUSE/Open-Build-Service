@@ -1,4 +1,4 @@
-%nav.navbar.navbar-dark.bg-gray-800.fixed-top
+%nav.navbar.navbar-dark.navbar-themed-colors.fixed-top
   .container-fluid.d-flex.flex-nowrap.justify-content-between.w-100
     = link_to(root_path, class: 'navbar-brand', alt: 'Logo') do
       = image_tag('obs-logo_small.svg')
@@ -29,6 +29,6 @@
         = render partial: 'layouts/webui/top_navigation_nobody'
 
 - if User.possibly_nobody.is_nobody? && !kerberos_mode?
-  - if !proxy_mode? && can_sign_up?
+  - if !::Configuration.proxy_auth_mode_enabled? && can_sign_up?
     = render partial: 'layouts/webui/sign_up_modal'
   = render partial: 'layouts/webui/login_modal'

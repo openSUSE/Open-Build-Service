@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe NotificationActionBarComponent, type: :component do
   context 'for unread notifications' do
     before do
@@ -12,7 +10,7 @@ RSpec.describe NotificationActionBarComponent, type: :component do
     end
 
     it do
-      expect(rendered_content).to have_selector(:css, 'a[href="my/notifications?update_all=true"]')
+      expect(rendered_content).to have_link(href: 'my/notifications?update_all=true')
     end
 
     it do
@@ -35,7 +33,7 @@ RSpec.describe NotificationActionBarComponent, type: :component do
     end
 
     it do
-      expect(rendered_content).to have_selector(:css, 'a[href="my/notifications?type=read&update_all=true"]')
+      expect(rendered_content).to have_link(href: 'my/notifications?type=read&update_all=true')
     end
 
     it do

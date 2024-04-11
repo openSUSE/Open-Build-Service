@@ -1,10 +1,4 @@
-require 'rails_helper'
-# WARNING: If you change changerequest tests make sure you uncomment this line
-# and start a test backend. Some of the methods require real backend answers
-# for projects/packages.
-# CONFIG['global_write_through'] = true
-
-RSpec.describe Webui::RequestController, vcr: true do
+RSpec.describe Webui::RequestController, :vcr do
   let(:submitter_with_group) { create(:user_with_groups, :with_home, login: 'fluffyrabbit') }
   let(:submitter) { create(:confirmed_user, :with_home, login: 'kugelblitz') }
   let(:receiver) { create(:confirmed_user, :with_home, login: 'titan') }
@@ -95,10 +89,6 @@ RSpec.describe Webui::RequestController, vcr: true do
           get :request_action, params: { number: bs_request.number, index: 0, id: bs_request.bs_request_actions.first.id, format: :js }, xhr: true
         end
 
-        it 'shows a hint' do
-          expect(assigns(:not_full_diff)).to be_truthy
-        end
-
         it 'shows the truncated diff' do
           actions = assigns(:actions).select { |action| action[:type] == :submit && action[:sourcediff] }
           diff_size = actions.first[:sourcediff].first['files'][file_name]['diff']['_content'].split.size
@@ -123,8 +113,7 @@ RSpec.describe Webui::RequestController, vcr: true do
             create(:package_with_binary, name: 'test-package-binary', project: target_project)
           end
           let(:source_package) do
-            create(:package_with_binary, name: 'test-source-package-binary', project: source_project,
-                                         file_name: 'spec/support/files/bigfile_archive_2.tar.gz')
+            create(:package_with_binary, name: 'test-source-package-binary', project: source_project)
           end
 
           it_behaves_like 'a full diff not requested for', 'bigfile_archive.tar.gz/bigfile.txt'
@@ -156,8 +145,7 @@ RSpec.describe Webui::RequestController, vcr: true do
           let(:expected_diff_size) { archive_content_diff_size + diff_header_size }
           let(:target_package) { create(:package_with_binary, name: 'test-package-binary', project: target_project) }
           let(:source_package) do
-            create(:package_with_binary, name: 'test-source-package-binary',
-                                         project: source_project, file_name: 'spec/support/files/bigfile_archive_2.tar.gz')
+            create(:package_with_binary, name: 'test-source-package-binary', project: source_project, file_name: 'bigfile_archive_2.tar.gz')
           end
 
           it_behaves_like 'a full diff requested for'
@@ -192,6 +180,8 @@ RSpec.describe Webui::RequestController, vcr: true do
 
   describe 'POST #modify_review' do
     RSpec.shared_examples 'a valid review' do |new_state|
+      subject { request_with_review.reviews.last }
+
       let(:params_hash) do
         {
           comment: 'yeah',
@@ -204,8 +194,6 @@ RSpec.describe Webui::RequestController, vcr: true do
         post :modify_review, params: params_hash.update(new_state: new_state)
         request_with_review.reload
       end
-
-      subject { request_with_review.reviews.last }
 
       it { expect(response).to redirect_to(request_show_path(number: request_with_review.number)) }
       it { expect(subject.state).to eq(expected_state) }

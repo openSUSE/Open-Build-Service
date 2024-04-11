@@ -78,23 +78,31 @@ sub authorize {
   my ($conf, $req, $auth) = @_;
   my %auths;
   return () unless $BSConfig::subjectdnaccess || $BSConfig::ipaccess;
-  if ($BSConfig::subjectdnaccess && $conf->{'ssl_verify'}) {
-    my $dn = BSServer::getsubjectdn($req);
-    if (defined($dn)) {
+  my $dn;
+  if ($BSConfig::subjectdnaccess) {
+    if (($conf->{'proto'} || '') eq 'https') {
+      $dn = BSServer::getsubjectdn($req);
+    } elsif ($conf->{'trusted_subjectdn_header'}) {
+      $dn = ($req->{'headers'} || {})->{lc($conf->{'trusted_subjectdn_header'})};
+    }
+    if ($dn) {
       for my $dnre (sort keys %{$BSConfig::subjectdnaccess || {}}) {
         next unless $dn =~ /^$dnre$/s;
         $auths{$_} = 1 for split(',', $BSConfig::subjectdnaccess->{$dnre});
       }
     }
   }
-  my $peer = $req->{'peer'};
-  for my $ipre (sort keys %{$BSConfig::ipaccess || {}}) {
-    next unless $peer =~ /^$ipre$/s;
-    $auths{$_} = 1 for split(',', $BSConfig::ipaccess->{$ipre});
+  my $peerip = $req->{'peerip'};
+  if ($BSConfig::ipaccess && $peerip) {
+    for my $ipre (sort keys %{$BSConfig::ipaccess || {}}) {
+      next unless $peerip =~ /^$ipre$/s;
+      $auths{$_} = 1 for split(',', $BSConfig::ipaccess->{$ipre});
+    }
   }
+  die("500 access denied\n") if $auths{'_reject'};
   return () if grep {$auths{$_}} split(',', $auth);
-  warn("500 access denied for $peer by \$ipaccess rules in BSConfig\n");
-  die("500 access denied by \$ipaccess rules\n");
+  warn("500 access denied for ".($peerip || 'unknown').($dn ? " [$dn]" : '')." by access rules in BSConfig\n");
+  die("500 access denied\n");
 }
 
 sub dispatch {
@@ -102,13 +110,18 @@ sub dispatch {
 
   return BSDispatch::dispatch($conf, $req) if $req->{'req_mode'};
   my $peer = $isajax ? 'AJAX' : $req->{'peer'};
+  if (!$isajax && $conf->{'trusted_peerip_header'}) {
+    my $peerip = ($req->{'headers'} || {})->{lc($conf->{'trusted_peerip_header'})};
+    $req->{'peerip'} = $req->{'peer'} = $peer = $peerip if $peerip && $peerip =~ /^[0-9a-fA-F\.\:]+$/s;
+  }
   my $msg = sprintf("%-22s %s%s",
     "$req->{'action'} ($peer)", $req->{'path'},
     defined($req->{'query'}) ? "?$req->{'query'}" : '',
   );
   $req->{'slowrequestlog'} = $req->{'group'} ? $conf->{'slowrequestlog2'} : $conf->{'slowrequestlog'};
   my $requestid = ($req->{'headers'} || {})->{'x-request-id'};
-  if ($requestid && $requestid =~ /^[-_\.a-zA-Z0-9]+\z/s) {
+  undef $requestid unless $requestid && $requestid =~ /^[-_\.a-zA-Z0-9]+\z/s;
+  if ($requestid) {
     $req->{'requestid'} = $requestid;
     if ($isajax) {
       my $jev = $BSServerEvents::gev;
@@ -121,13 +134,18 @@ sub dispatch {
     my $statusmsg = $msg;
     if ($requestid) {
       $statusmsg = ' ['.substr($requestid, 0, 64).']';
-      $statusmsg = substr($msg, 0, 244 - length($statusmsg)).$statusmsg;
+      $statusmsg = substr($msg, 0, 243 - length($statusmsg)).$statusmsg;
     }
     BSServer::setstatus(2, $statusmsg);
   }
+  if ($isajax) {
+    my $autoheaders = $BSServerEvents::gev->{'autoheaders'};
+    BSServerEvents::cloneconnect("OK\n", "Content-Type: text/plain");
+    $BSServerEvents::gev->{'autoheaders'} = [ @$autoheaders ] if @{$autoheaders || []};
+    $req = $BSServerEvents::gev->{'request'};
+  }
   $msg .= " [$requestid]" if $requestid;
-  BSUtil::printlog($msg);
-  BSServerEvents::cloneconnect("OK\n", "Content-Type: text/plain") if $isajax;
+  BSUtil::printlog($msg, undef, $req->{'reqid'});
   return BSDispatch::dispatch($conf, $req);
 }
 
@@ -136,21 +154,22 @@ my $configurationcheck = 0;
 sub periodic {
   my ($conf) = @_;
   my $rundir = $conf->{'rundir'};
-  if (-e "$rundir/$conf->{'name'}.exit") {
+  my $runname = $conf->{'runname'};
+  if (-e "$rundir/$runname.exit") {
     BSServer::dump_child_pids();
     BSServer::msg("$conf->{'name'} exiting...");
     unlink("$conf->{'ajaxsocketpath'}.lock") if $conf->{'ajaxsocketpath'};
-    unlink("$rundir/$conf->{'name'}.exit");
+    unlink("$rundir/$runname.exit");
     exit(0);
   }
-  if (-e "$rundir/$conf->{'name'}.restart") {
+  if (-e "$rundir/$runname.restart") {
     BSServer::dump_child_pids();
     BSServer::msg("$conf->{'name'} restarting...");
     if (system($0, "--test")) {
       BSServer::msg("$0 failed, aborting restart");
       return;
     }
-    unlink("$rundir/$conf->{'name'}.restart");
+    unlink("$rundir/$runname.restart");
     my $arg;
     my $sock = BSServer::getserversocket();
     # clear close-on-exec bit
@@ -178,6 +197,7 @@ sub periodic_ajax {
   if (!$conf->{'exiting'}) {
     my @s = stat(BSServer::getserverlock());
     return if $s[3];
+    # somebody removed our lock file. exit the server.
     my $sev = $conf->{'server_ev'};
     close($sev->{'fd'});
     BSEvents::rem($sev);
@@ -185,6 +205,7 @@ sub periodic_ajax {
     $conf->{'exiting'} = 10 + 1;
   }
   my @events = BSEvents::allevents();
+  # there always is the periodic concheck handler, thus we check for <= 1
   if (@events <= 1 || --$conf->{'exiting'} == 0) {
     BSServer::msg("AJAX: $conf->{'name'} goodbye.");
     exit(0);
@@ -332,10 +353,21 @@ sub critlogger {
   BSUtil::appendstr($conf->{'critlogfile'}, $logstr);
 }
 
+sub setup_authenticator {
+  require BSSigAuth;
+  for my $authrealm (sort keys %{$BSConfig::signature_auth_keyfile || {}}) {
+    next unless $authrealm =~ /^(.*?)\@/;
+    my $keyfile = $BSConfig::signature_auth_keyfile->{$authrealm};
+    require BSSSHSign if ref $keyfile;
+    $BSRPC::authenticator->{$authrealm} = BSSigAuth::generate_authenticator($1, 'verbose' => 1, 'keyfile' => $keyfile);
+  }
+}
+
 sub server {
   my ($name, $args, $conf, $aconf) = @_;
   my $logfile;
   my $request;
+  my $request_content;
 
   if (@{$args || []} && $args->[0] eq '--logfile') {
     shift @$args;
@@ -344,7 +376,8 @@ sub server {
   }
 
   if ($args && @$args) {
-    my $rundir = ($conf ? $conf->{'rundir'} : undef) || $BSConfig::rundir || "$BSConfig::bsdir/run";
+    my $rundir = ($conf || $aconf || {})->{'rundir'} || $BSConfig::rundir || "$BSConfig::bsdir/run";
+    my $runname = ($conf || $aconf || {})->{'runname'} || $name;
     if ($args->[0] eq '--test') {
       if ($conf) {
 	$conf->{'verifiers'} ||= $BSVerify::verifiers;
@@ -362,8 +395,8 @@ sub server {
 	exit 0;
       }
       print("exiting server...\n");
-      BSUtil::touch("$rundir/$name.exit");
-      BSUtil::waituntilgone("$rundir/$name.exit");
+      BSUtil::touch("$rundir/$runname.exit");
+      BSUtil::waituntilgone("$rundir/$runname.exit");
       exit 0;
     }
     if ($args->[0] eq '--restart' && @$args == 1) {
@@ -371,14 +404,18 @@ sub server {
 	die("server not running\n");
       }
       print("restarting server...\n");
-      BSUtil::touch("$rundir/$name.restart");
-      BSUtil::waituntilgone("$rundir/$name.restart");
+      BSUtil::touch("$rundir/$runname.restart");
+      BSUtil::waituntilgone("$rundir/$runname.restart");
       exit 0;
     }
     if ($args->[0] eq '--req') {
       shift @$args;
       $request = shift @$args;
       die("need a server config for --req\n") unless $conf;
+      if (@$args && $args->[0] eq '--req-content') {
+        shift @$args;
+        $request_content = shift @$args;
+      }
     }
   }
 
@@ -386,7 +423,9 @@ sub server {
   BSUtil::mkdir_p_chown($bsdir, $BSConfig::bsuser, $BSConfig::bsgroup) || die("unable to create $bsdir\n");
 
   if ($conf) {
+    $conf->{'name'} = $name;
     $conf->{'rundir'} ||= $BSConfig::rundir || "$BSConfig::bsdir/run";
+    $conf->{'runname'} ||= $name;
     $conf->{'verifiers'} ||= $BSVerify::verifiers;
     $conf->{'dispatch'} ||= \&dispatch;
     $conf->{'stdreply'} ||= \&stdreply;
@@ -394,13 +433,12 @@ sub server {
     $conf->{'authorize'} ||= \&authorize;
     $conf->{'periodic'} ||= \&periodic;
     $conf->{'periodic_interval'} ||= 1;
-    $conf->{'serverstatus'} ||= "$conf->{'rundir'}/$name.status";
+    $conf->{'serverstatus'} ||= "$conf->{'rundir'}/$conf->{'runname'}.status";
     $conf->{'setkeepalive'} = 1 unless defined $conf->{'setkeepalive'};
     $conf->{'run'} ||= \&BSServer::server;
     $conf->{'slowrequestlog'} ||= "$BSConfig::logdir/$name.slow.log" if $conf->{'slowrequestthr'};
     $conf->{'slowrequestlog2'} ||= "$BSConfig::logdir/${name}2.slow.log" if $conf->{'slowrequestthr'} && $conf->{'port2'};
     $conf->{'critlogfile'} ||= "$BSConfig::logdir/$name.crit.log";
-    $conf->{'name'} = $name;
     $conf->{'logfile'} = $logfile if $logfile;
     $conf->{'ssl_keyfile'} ||= $BSConfig::ssl_keyfile if $BSConfig::ssl_keyfile;
     $conf->{'ssl_certfile'} ||= $BSConfig::ssl_certfile if $BSConfig::ssl_certfile;
@@ -410,7 +448,9 @@ sub server {
   }
   if ($aconf) {
     require BSHandoff;
+    $aconf->{'name'} = $name;
     $aconf->{'rundir'} ||= $BSConfig::rundir || "$BSConfig::bsdir/run";
+    $aconf->{'runname'} ||= ($conf || {})->{'runname'} || $name;
     $aconf->{'verifiers'} ||= $BSVerify::verifiers;
     $aconf->{'dispatch'} ||= \&dispatch;
     $aconf->{'stdreply'} ||= \&stdreply;
@@ -421,9 +461,10 @@ sub server {
     $aconf->{'getrequest_recvfd'} ||= \&BSHandoff::receivefd;
     $aconf->{'setkeepalive'} = 1 unless defined $aconf->{'setkeepalive'};
     $aconf->{'getrequest_timeout'} = 10 unless exists $aconf->{'getrequest_timeout'};
-    $aconf->{'replrequest_timeout'} = 10 unless exists $aconf->{'replrequest_timeout'};
+    $aconf->{'replrequest_timeout'} = 60 unless exists $aconf->{'replrequest_timeout'};
+    $aconf->{'replstream_timeout'} = 120 unless exists $aconf->{'replstream_timeout'};
     $aconf->{'run'} ||= \&BSEvents::schedule;
-    $aconf->{'name'} = $name;
+    $aconf->{'slowrequestlog'} ||= "$BSConfig::logdir/${name}_ajax.slow.log" if $aconf->{'slowrequestthr'};
     BSDispatch::compile($aconf);
   }
   if ($request) {
@@ -437,6 +478,7 @@ sub server {
     $req->{'path'} = $request;
     ($req->{'path'}, $req->{'query'}) = ($1, $2) if $request =~ /^(.*?)\?(.*)$/;
     $req->{'path'} =~ s/%([a-fA-F0-9]{2})/chr(hex($1))/ge;
+    $req = { %$req, %{BSHTTP::str2req(readstr($request_content))} } if $request_content;
     $BSServer::request = $req;
     if ($req->{'action'} eq 'AJAX') {
       $isajax = 1;
@@ -484,11 +526,13 @@ sub server {
       my $sev = BSServerEvents::addserver(BSServer::getserversocket(), $aconf);
       $aconf->{'server_ev'} = $sev;	# for periodic_ajax
       BSServer::msg("AJAX: $name started");
-      eval {
-        $aconf->{'run'}->($aconf);
-      };
-      writestr("$aconf->{'rundir'}/$name.AJAX.died", undef, $@);
-      BSUtil::diecritical("AJAX died: $@");
+      eval { $aconf->{'run'}->($aconf) };
+      if ($@) {
+        writestr("$aconf->{'rundir'}/$aconf->{'runname'}.AJAX.died", undef, $@);
+        BSUtil::diecritical("AJAX died: $@");
+      }
+      BSServer::msg("AJAX: $name goodbye.");
+      exit(0);
     }
   }
   my $rundir = $conf->{'rundir'};

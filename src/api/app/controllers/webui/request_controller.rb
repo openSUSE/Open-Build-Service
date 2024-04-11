@@ -2,39 +2,42 @@ class Webui::RequestController < Webui::WebuiController
   helper 'webui/package'
 
   before_action :require_login,
-                except: [:show, :sourcediff, :diff, :request_action, :request_action_changes, :inline_comment, :build_results, :rpm_lint, :changes, :mentioned_issues]
+                except: %i[show sourcediff diff request_action request_action_changes inline_comment build_results rpm_lint changes mentioned_issues]
   # requests do not really add much value for our page rank :)
   before_action :lockout_spiders
   before_action :require_request,
-                only: [:changerequest, :show, :request_action, :request_action_changes, :inline_comment, :build_results, :rpm_lint, :changes, :mentioned_issues]
-  before_action :set_actions, only: [:inline_comment, :show, :build_results, :rpm_lint, :changes, :mentioned_issues],
+                only: %i[changerequest show request_action request_action_changes inline_comment build_results rpm_lint
+                         changes mentioned_issues chart_build_results complete_build_results]
+  before_action :set_actions, only: %i[inline_comment show build_results rpm_lint changes mentioned_issues chart_build_results complete_build_results request_action_changes],
                               if: -> { Flipper.enabled?(:request_show_redesign, User.session) }
-  before_action :set_supported_actions, only: [:inline_comment, :show, :build_results, :rpm_lint, :changes, :mentioned_issues],
-                                        if: -> { Flipper.enabled?(:request_show_redesign, User.session) }
-  before_action :set_action_id, only: [:inline_comment, :show, :build_results, :rpm_lint, :changes, :mentioned_issues],
-                                if: -> { Flipper.enabled?(:request_show_redesign, User.session) }
-  before_action :set_active_action, only: [:inline_comment, :show, :build_results, :rpm_lint, :changes, :mentioned_issues],
-                                    if: -> { Flipper.enabled?(:request_show_redesign, User.session) }
-  before_action :set_superseded_request, only: [:show, :request_action, :request_action_changes, :build_results, :rpm_lint, :changes, :mentioned_issues]
+  before_action :set_actions_deprecated, only: [:show]
+  before_action :build_results_data, only: [:show], if: -> { Flipper.enabled?(:request_show_redesign, User.session) }
+  before_action :set_action, only: %i[inline_comment show build_results rpm_lint changes mentioned_issues],
+                             if: -> { Flipper.enabled?(:request_show_redesign, User.session) }
+  before_action :set_influxdb_data_request_actions, only: %i[show build_results rpm_lint changes mentioned_issues],
+                                                    if: -> { Flipper.enabled?(:request_show_redesign, User.session) }
+  before_action :set_superseded_request, only: %i[show request_action request_action_changes build_results rpm_lint changes mentioned_issues]
   before_action :check_ajax, only: :sourcediff
-  before_action :prepare_request_data, only: [:show, :build_results, :rpm_lint, :changes, :mentioned_issues],
+  before_action :prepare_request_data, only: %i[show build_results rpm_lint changes mentioned_issues],
                                        if: -> { Flipper.enabled?(:request_show_redesign, User.session) }
-  before_action :check_beta_user_redirect, only: [:build_results, :rpm_lint, :changes, :mentioned_issues]
+  before_action :cache_diff_data, only: %i[show build_results rpm_lint changes mentioned_issues],
+                                  if: -> { Flipper.enabled?(:request_show_redesign, User.session) }
+  before_action :check_beta_user_redirect, only: %i[build_results rpm_lint changes mentioned_issues]
 
   after_action :verify_authorized, only: [:create]
 
   def show
     # TODO: Remove this `if` condition, and the `else` clause once request_show_redesign is rolled out
     if Flipper.enabled?(:request_show_redesign, User.session)
+      @history_elements = @bs_request.history_elements.includes(:user)
       @active_tab = 'conversation'
       render :beta_show
     else
       @diff_limit = params[:full_diff] ? 0 : nil
-      @diff_to_superseded_id = params[:diff_to_superseded]
       @is_author = @bs_request.creator == User.possibly_nobody.login
 
       @is_target_maintainer = @bs_request.is_target_maintainer?(User.session)
-      @can_handle_request = @bs_request.state.in?([:new, :review, :declined]) && (@is_target_maintainer || @is_author)
+      @can_handle_request = @bs_request.state.in?(%i[new review declined]) && (@is_target_maintainer || @is_author)
 
       @history = @bs_request.history_elements.includes(:user)
 
@@ -47,21 +50,20 @@ class Webui::RequestController < Webui::WebuiController
       @comments = @bs_request.comments
       @comment = Comment.new
 
-      if User.session && params[:notification_id]
-        @current_notification = Notification.find(params[:notification_id])
-        authorize @current_notification, :update?, policy_class: NotificationPolicy
-      end
+      handle_notification
 
       @actions = @bs_request.webui_actions(filelimit: @diff_limit, tarlimit: @diff_limit, diff_to_superseded: @diff_to_superseded, diffs: false)
       @action = @actions.first
       @active = @action[:name]
+      # TODO: this is the last instance of the @not_full_diff variable in the request scope, once request_workflow_redesign beta is rolled out,
+      # let's get rid of this variable and also of `BsRequest.truncated_diffs` as it is no longer used anywhere else
       # print a hint that the diff is not fully shown (this only needs to be verified for submit actions)
       @not_full_diff = BsRequest.truncated_diffs?(@actions)
 
       reviews = @bs_request.reviews.where(state: 'new')
       user = User.session # might be nil
-      @my_open_reviews = reviews.select { |review| review.matches_user?(user) }
-      @can_add_reviews = @bs_request.state.in?([:new, :review]) && (@is_author || @is_target_maintainer || @my_open_reviews.present?)
+      @my_open_reviews = reviews.select { |review| review.matches_user?(user) }.reject(&:staging_project?)
+      @can_add_reviews = @bs_request.state.in?(%i[new review]) && (@is_author || @is_target_maintainer || @my_open_reviews.present?)
 
       respond_to do |format|
         format.html
@@ -83,7 +85,7 @@ class Webui::RequestController < Webui::WebuiController
     rescue BsRequestAction::MissingAction
       flash[:error] = 'Unable to submit, sources are unchanged'
     rescue Project::Errors::UnknownObjectError
-      flash[:error] = "Unable to submit: The source of package #{elide(params[:project_name])}/#{elide(params[:package_name])} is broken"
+      flash[:error] = "Unable to submit. The project '#{elide(params[:project_name])}' was not found"
     rescue APIError, ActiveRecord::RecordInvalid => e
       flash[:error] = e.message
     rescue Backend::Error => e
@@ -131,9 +133,9 @@ class Webui::RequestController < Webui::WebuiController
     review_params, request = modify_review_set_request
     if request.nil?
       flash[:error] = 'Unable to load request'
-      redirect_back(fallback_location: user_path(User.session!))
+      redirect_back_or_to user_path(User.session!)
       return
-    elsif !new_state.in?(['accepted', 'declined'])
+    elsif !new_state.in?(%w[accepted declined])
       flash[:error] = 'Unknown state to set'
     else
       begin
@@ -158,11 +160,8 @@ class Webui::RequestController < Webui::WebuiController
                                          action_id: params['id'].to_i, cacheonly: 1)
     @action = @actions.find { |action| action[:id] == params['id'].to_i }
     @active = @action[:name]
-    @not_full_diff = BsRequest.truncated_diffs?(@actions)
-    @diff_to_superseded_id = params[:diff_to_superseded]
-    @refresh = @action[:diff_not_cached]
 
-    if @refresh
+    if @action[:diff_not_cached]
       bs_request_action = BsRequestAction.find(@action[:id])
       job = Delayed::Job.where('handler LIKE ?', "%job_class: BsRequestActionWebuiInfosJob%#{bs_request_action.to_global_id.uri}%").count
       BsRequestActionWebuiInfosJob.perform_later(bs_request_action) if job.zero?
@@ -174,23 +173,9 @@ class Webui::RequestController < Webui::WebuiController
   end
 
   def request_action_changes
-    # TODO: Change @diff_limit to a local variable
-    @diff_limit = params[:full_diff] ? 0 : nil
-    # TODO: Change @actions to a local variable
-    @actions = @bs_request.webui_actions(filelimit: @diff_limit, tarlimit: @diff_limit, diff_to_superseded: @diff_to_superseded, diffs: true,
-                                         action_id: params['id'].to_i, cacheonly: 1)
-    @action = @actions.find { |action| action[:id] == params['id'].to_i }
-    # TODO: Check if @not_full_diff is really needed
-    @not_full_diff = BsRequest.truncated_diffs?(@actions)
-    # TODO: Check if @diff_to_superseded_id is really needed
-    @diff_to_superseded_id = params[:diff_to_superseded]
-    @refresh = @action[:diff_not_cached]
+    @action = @actions.where(id: params['id'].to_i).first
 
-    if @refresh
-      bs_request_action = BsRequestAction.find(@action[:id])
-      job = Delayed::Job.where('handler LIKE ?', "%job_class: BsRequestActionWebuiInfosJob%#{bs_request_action.to_global_id.uri}%").count
-      BsRequestActionWebuiInfosJob.perform_later(bs_request_action) if job.zero?
-    end
+    cache_diff_data
 
     respond_to do |format|
       format.js
@@ -205,7 +190,7 @@ class Webui::RequestController < Webui::WebuiController
   end
 
   def changerequest
-    changestate = (['accepted', 'declined', 'revoked', 'new'] & params.keys).last
+    changestate = (%w[accepted declined revoked new] & params.keys).last
 
     if change_state(changestate, params)
       # TODO: Make this work for each submit action individually
@@ -291,37 +276,42 @@ class Webui::RequestController < Webui::WebuiController
   end
 
   def build_results
-    redirect_to request_show_path(params[:number], params[:request_action_id]) unless @action[:sprj] || @action[:spkg]
+    redirect_to request_show_path(params[:number], params[:request_action_id]) unless @action.tab_visibility.build
 
     @active_tab = 'build_results'
-    @project = @staging_project || @action[:sprj]
-    @buildable = @action[:spkg] || @project
-
-    @ajax_data = {}
-    @ajax_data['project'] = @project if @project
-    @ajax_data['package'] = @action[:spkg] if @action[:spkg]
+    @project = @staging_project || @action.source_project
+    @buildable = @action.source_package || @project
   end
 
   def rpm_lint
-    redirect_to request_show_path(params[:number], params[:request_action_id]) unless @action[:sprj] || @action[:spkg]
+    redirect_to request_show_path(params[:number], params[:request_action_id]) unless @action.tab_visibility.rpm_lint
 
     @active_tab = 'rpm_lint'
     @ajax_data = {}
-    @ajax_data['project'] = @action[:sprj] if @action[:sprj]
-    @ajax_data['package'] = @action[:spkg] if @action[:spkg]
+    @ajax_data['project'] = @action.source_project if @action.source_project
+    @ajax_data['package'] = @action.source_package if @action.source_package
     @ajax_data['is_staged_request'] = true if @staging_project.present?
   end
 
   def changes
-    redirect_to request_show_path(params[:number], params[:request_action_id]) unless @action[:type].in?(@actions_for_diff)
+    redirect_to request_show_path(params[:number], params[:request_action_id]) unless @action.tab_visibility.changes
 
     @active_tab = 'changes'
   end
 
   def mentioned_issues
-    redirect_to request_show_path(params[:number], params[:request_action_id]) unless @action[:type].in?(@actions_for_diff)
+    redirect_to request_show_path(params[:number], params[:request_action_id]) unless @action.tab_visibility.issues
 
     @active_tab = 'mentioned_issues'
+  end
+
+  def chart_build_results
+    render partial: 'webui/request/chart_build_results', locals: { chart_build_results_data: build_results_data }
+  end
+
+  def complete_build_results
+    filters = params.keys - %w[controller action number]
+    render partial: 'webui/request/beta_show_tabs/build_status', locals: { build_results_data: build_results_data, bs_request_number: @bs_request.number, filters: filters }
   end
 
   private
@@ -349,7 +339,7 @@ class Webui::RequestController < Webui::WebuiController
   end
 
   def any_project_maintained_by_current_user?
-    projects = @bs_request.bs_request_actions.select(:target_project).distinct.pluck(:target_project)
+    projects = @actions.select(:target_project).distinct.pluck(:target_project)
     maintainer_role = Role.find_by_title('maintainer')
     projects.any? { |project| Project.find_by_name(project).user_has_role?(User.possibly_nobody, maintainer_role) }
   end
@@ -364,12 +354,12 @@ class Webui::RequestController < Webui::WebuiController
   end
 
   def set_superseded_request
-    return unless params[:diff_to_superseded]
+    return unless (@diff_to_superseded_id = params[:diff_to_superseded])
 
-    @diff_to_superseded = @bs_request.superseding.find_by(number: params[:diff_to_superseded])
+    @diff_to_superseded = @bs_request.superseding.find_by(number: @diff_to_superseded_id)
     return if @diff_to_superseded
 
-    flash[:error] = "Request #{params[:diff_to_superseded]} does not exist or is not superseded by request #{@bs_request.number}."
+    flash[:error] = "Request #{@diff_to_superseded_id} does not exist or is not superseded by request #{@bs_request.number}."
     nil
   end
 
@@ -378,7 +368,7 @@ class Webui::RequestController < Webui::WebuiController
   end
 
   def target_package_maintainers
-    distinct_bs_request_actions = @bs_request.bs_request_actions.select(:target_project, :target_package).distinct
+    distinct_bs_request_actions = @actions.select(:target_project, :target_package).distinct
     distinct_bs_request_actions.flat_map do |action|
       Package.find_by_project_and_name(action.target_project, action.target_package).try(:maintainers)
     end.compact.uniq
@@ -436,15 +426,6 @@ class Webui::RequestController < Webui::WebuiController
     flash[:success] += " and forwarded to #{target_link} (#{request_link})"
   end
 
-  def set_package
-    return unless params.key?(:package_name)
-
-    @package = Package.get_by_project_and_name(params[:project_name], params[:package_name],
-                                               use_source: false, follow_project_links: true, follow_multibuild: true)
-  rescue APIError
-    raise ActiveRecord::RecordNotFound
-  end
-
   # Subcontroller is expected to implement #bs_request_params
   # Strong parameters for BsRequest with nested attributes for its bs_request_actions association
   def bs_request_params
@@ -485,18 +466,20 @@ class Webui::RequestController < Webui::WebuiController
     @actions = @bs_request.bs_request_actions
   end
 
-  def set_supported_actions
-    # Change supported_actions below into actions here when all actions are supported
-    @supported_actions = @actions.where(type: [:add_role, :change_devel, :delete, :submit])
+  # [DEPRECATED] TODO: remove once request_workflow_redesign beta is rolled out
+  # This method exists in order to have a set_actions in before_action for non beta too
+  def set_actions_deprecated
+    set_actions
   end
 
-  def set_action_id
-    # In case the request doesn't have supported actions, we display the first unsupported action.
-    @action_id = params[:request_action_id] || @supported_actions.first&.id || @actions.first.id
+  def build_results_data
+    ActionBuildResultsService::ChartDataExtractor.new(actions: @actions).call
   end
 
-  def set_active_action
-    @active_action = @actions.find(@action_id)
+  def set_action
+    # If no specific request_action_id, take the first
+    action_id = params[:request_action_id] || @actions.first.id
+    @action = @actions.find(action_id)
   end
 
   def staging_status(request, target_project)
@@ -515,32 +498,38 @@ class Webui::RequestController < Webui::WebuiController
     }
   end
 
-  def prepare_request_data
-    @is_author = @bs_request.creator == User.possibly_nobody.login
-    @is_target_maintainer = @bs_request.is_target_maintainer?(User.session)
-    reviews = @bs_request.reviews.where(state: 'new')
-    @my_open_reviews = reviews.select { |review| review.matches_user?(User.session) }
-    @can_add_reviews = @bs_request.state.in?([:new, :review]) && (@is_author || @is_target_maintainer || @my_open_reviews.present?)
+  def cache_diff_data
+    return unless @action.diff_not_cached({ diff_to_superseded: @diff_to_superseded })
 
-    @diff_limit = params[:full_diff] ? 0 : nil
-    @diff_to_superseded_id = params[:diff_to_superseded]
+    job = Delayed::Job.where('handler LIKE ?', "%job_class: BsRequestActionWebuiInfosJob%#{@action.to_global_id.uri}%").count
+    BsRequestActionWebuiInfosJob.perform_later(@action) if job.zero?
+  end
+
+  def handle_notification
+    return unless User.session && params[:notification_id]
+
+    @current_notification = Notification.find(params[:notification_id])
+    authorize @current_notification, :update?, policy_class: NotificationPolicy
+  end
+
+  def prepare_request_data
+    @is_target_maintainer = @bs_request.is_target_maintainer?(User.session)
+    @my_open_reviews = ReviewsFinder.new(@bs_request.reviews).open_reviews_for_user(User.session).reject(&:staging_project?)
 
     # Handling request actions
-    @action = @bs_request.webui_actions(filelimit: @diff_limit, tarlimit: @diff_limit, diff_to_superseded: @diff_to_superseded,
-                                        diffs: true, action_id: @action_id.to_i, cacheonly: 1).first
-    active_action_index = @supported_actions.index(@active_action)
-    if active_action_index
-      @prev_action = @supported_actions[active_action_index - 1] unless active_action_index.zero?
-      @next_action = @supported_actions[active_action_index + 1] if active_action_index + 1 < @supported_actions.length
+    @action ||= @actions.first
+    action_index = @actions.index(@action)
+    if action_index
+      @prev_action = @actions[action_index - 1] unless action_index.zero?
+      @next_action = @actions[action_index + 1] if action_index + 1 < @actions.length
     end
 
     target_project = Project.find_by_name(@bs_request.target_project_name)
     @request_reviews = @bs_request.reviews.for_non_staging_projects(target_project)
     @staging_status = staging_status(@bs_request, target_project) if Staging::Workflow.find_by(project: target_project)
-    @refresh = @action[:diff_not_cached]
 
     # Collecting all issues in a hash. Each key is the issue name and the value is a hash containing all the issue details.
-    @issues = @action.fetch(:sourcediff, []).reduce({}) { |accumulator, sourcediff| accumulator.merge(sourcediff.fetch('issues', {})) }
+    @issues = @action.webui_sourcediff({ diff_to_superseded: @diff_to_superseded, cacheonly: 1 }).reduce({}) { |accumulator, sourcediff| accumulator.merge(sourcediff.fetch('issues', {})) }
 
     # retrieve a list of all package maintainers that are assigned to at least one target package
     @package_maintainers = target_package_maintainers
@@ -554,17 +543,13 @@ class Webui::RequestController < Webui::WebuiController
 
     # Handling build results
     @staging_project = @bs_request.staging_project.name unless @bs_request.staging_project_id.nil?
-    @actions_for_diff = [:submit, :delete, :maintenance_incident, :maintenance_release]
 
-    if @refresh
-      bs_request_action = BsRequestAction.find(@action[:id])
-      job = Delayed::Job.where('handler LIKE ?', "%job_class: BsRequestActionWebuiInfosJob%#{bs_request_action.to_global_id.uri}%").count
-      BsRequestActionWebuiInfosJob.perform_later(bs_request_action) if job.zero?
-    end
+    handle_notification
+  end
 
-    return unless User.session && params[:notification_id]
-
-    @current_notification = Notification.find(params[:notification_id])
-    authorize @current_notification, :update?, policy_class: NotificationPolicy
+  def set_influxdb_data_request_actions
+    InfluxDB::Rails.current.tags = {
+      bs_request_action_type: @action.class.name
+    }
   end
 end

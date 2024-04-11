@@ -5,14 +5,14 @@ class PersonController < ApplicationController
   validate_action register: { method: :put, response: :status }
   validate_action register: { method: :post, response: :status }
 
-  skip_before_action :extract_user, only: [:command, :register]
-  skip_before_action :require_login, only: [:command, :register]
+  skip_before_action :extract_user, only: %i[command register]
+  skip_before_action :require_login, only: %i[command register]
 
-  before_action :set_user, only: [:post_userinfo, :change_my_password, :get_watchlist, :put_watchlist]
+  before_action :set_user, only: %i[post_userinfo change_my_password get_watchlist put_watchlist]
 
   def show
     @list = if params[:prefix]
-              User.where('login LIKE ?', params[:prefix] + '%')
+              User.where('login LIKE ?', "#{params[:prefix]}%")
             elsif params[:confirmed]
               User.confirmed
             else
@@ -202,12 +202,12 @@ class PersonController < ApplicationController
     note = xml.elements['/unregisteredperson/note'].text if xml.elements['/unregisteredperson/note']
     status = xml.elements['/unregisteredperson/state'].text if xml.elements['/unregisteredperson/status']
 
-    if authenticator.proxy_mode?
+    if ::Configuration.proxy_auth_mode_enabled?
       raise ErrRegisterSave, 'Missing iChain header' if request.env['HTTP_X_USERNAME'].blank?
 
       login = request.env['HTTP_X_USERNAME']
       email = request.env['HTTP_X_EMAIL'] if request.env['HTTP_X_EMAIL'].present?
-      realname = request.env['HTTP_X_FIRSTNAME'] + ' ' + request.env['HTTP_X_LASTNAME'] if request.env['HTTP_X_LASTNAME'].present?
+      realname = "#{request.env['HTTP_X_FIRSTNAME']} #{request.env['HTTP_X_LASTNAME']}" if request.env['HTTP_X_LASTNAME'].present?
     end
 
     UnregisteredUser.register(login: login, realname: realname, email:
@@ -218,6 +218,27 @@ class PersonController < ApplicationController
     # Strip passwords from request environment and re-raise exception
     request.env['RAW_POST_DATA'] = request.env['RAW_POST_DATA'].sub(%r{<password>(.*)</password>}, '<password>STRIPPED<password>')
     raise e
+  end
+
+  def change_my_password
+    authorize @user, :update?
+    # FIXME3.0: remove this function
+    xml = REXML::Document.new(request.raw_post)
+
+    logger.debug("changepasswd XML: #{request.raw_post}")
+
+    login = xml.elements['/userchangepasswd/login'].text
+    password = xml.elements['/userchangepasswd/password'].text
+    login = CGI.unescape(login)
+
+    change_password(login, CGI.unescape(password))
+    render_ok
+  end
+
+  private
+
+  def set_user
+    @user = User.find_by(login: params[:login])
   end
 
   def update_watchlist(user, xml)
@@ -241,8 +262,6 @@ class PersonController < ApplicationController
     end
   end
 
-  private :update_watchlist
-
   def update_globalroles(user, xml)
     new_globalroles = []
     xml.elements('globalrole') do |e|
@@ -250,23 +269,6 @@ class PersonController < ApplicationController
     end
 
     user.update_globalroles(Role.global.where(title: new_globalroles))
-  end
-
-  private :update_globalroles
-
-  def change_my_password
-    authorize @user, :update?
-    # FIXME3.0: remove this function
-    xml = REXML::Document.new(request.raw_post)
-
-    logger.debug("changepasswd XML: #{request.raw_post}")
-
-    login = xml.elements['/userchangepasswd/login'].text
-    password = xml.elements['/userchangepasswd/password'].text
-    login = CGI.unescape(login)
-
-    change_password(login, CGI.unescape(password))
-    render_ok
   end
 
   def change_password(login, password)
@@ -294,12 +296,5 @@ class PersonController < ApplicationController
     # update password in users db
     @user.password = password
     @user.save!
-  end
-  private :change_password
-
-  private
-
-  def set_user
-    @user = User.find_by(login: params[:login])
   end
 end

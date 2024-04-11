@@ -1,15 +1,9 @@
-require 'rails_helper'
-# WARNING: If you change tests make sure you uncomment this line
-# and start a test backend. Some of the Patchinfo methods
-# require real backend answers for projects/packages.
-# CONFIG['global_write_through'] = true
-
-RSpec.describe Webui::PatchinfoController, vcr: true do
+RSpec.describe Webui::PatchinfoController, :vcr do
   let(:user) { create(:user, :with_home, login: 'macario') }
   let(:other_user) { create(:confirmed_user, :with_home, login: 'gilberto') }
   let(:other_package) { create(:package_with_file, project: user.home_project, name: 'other_package') }
   let(:patchinfo_package) do
-    Patchinfo.new.create_patchinfo(user.home_project_name, nil) unless user.home_project.packages.exists?(name: 'patchinfo')
+    create(:patchinfo, project_name: user.home_project_name) unless user.home_project.packages.exists?(name: 'patchinfo')
     Package.get_by_project_and_name(user.home_project_name, 'patchinfo', use_source: false)
   end
   let(:fake_build_results) do
@@ -27,7 +21,7 @@ RSpec.describe Webui::PatchinfoController, vcr: true do
     HEREDOC
   end
   let(:fake_patchinfo_with_binaries) do
-    Patchinfo.new(data:
+    create(:patchinfo_base, data:
       '<patchinfo>
         <category>recommended</category>
         <rating>low</rating>
@@ -207,14 +201,15 @@ RSpec.describe Webui::PatchinfoController, vcr: true do
     end
 
     context "when the patchinfo's xml is valid" do
+      let(:patchinfo) { Package.get_by_project_and_name(user.home_project_name, 'patchinfo', use_source: false).patchinfo.hashed }
+
       before do
         post :create, params: { project: user.home_project } # this creates the patchinfo without summary and description
         do_proper_post_save
-        @patchinfo = Package.get_by_project_and_name(user.home_project_name, 'patchinfo', use_source: false).patchinfo.hashed
       end
 
-      it { expect(@patchinfo['summary']).to eq('long enough summary is ok') }
-      it { expect(@patchinfo['description']).to eq('long enough description is also ok' * 5) }
+      it { expect(patchinfo['summary']).to eq('long enough summary is ok') }
+      it { expect(patchinfo['description']).to eq('long enough description is also ok' * 5) }
       it { expect(flash[:success]).to eq("Successfully edited #{patchinfo_package.name}") }
       it { expect(response).to redirect_to(action: 'show', project: user.home_project_name, package: patchinfo_package.name) }
     end

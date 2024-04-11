@@ -1,6 +1,6 @@
 .h2.text-center.py-2 Log In
 = form_tag(log_in_params[:url], log_in_params[:options]) do
-  - if proxy_mode?
+  - if ::Configuration.proxy_auth_mode_enabled?
     = hidden_field_tag(:context, 'default')
     = hidden_field_tag(:proxypath, 'reserve')
     = hidden_field_tag(:message, 'Please log in')
@@ -13,6 +13,6 @@
 - if can_sign_up?
   .login-separator.text-center
     %hr.my-4
-    %span.bg-white.px-3.text-muted or
+    %span.bg-modal.px-3.text-muted or
   .text-center
     = sign_up_link

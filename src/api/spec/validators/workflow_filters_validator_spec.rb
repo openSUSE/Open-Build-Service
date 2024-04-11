@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe WorkflowFiltersValidator do
   let(:fake_model) do
     Struct.new(:workflow_instructions, :scm_webhook) do
@@ -15,9 +13,9 @@ RSpec.describe WorkflowFiltersValidator do
   end
 
   describe '#validate' do
-    let(:scm_webhook) { SCMWebhook.new(payload: {}) }
-
     subject { fake_model.new(workflow_instructions, scm_webhook) }
+
+    let(:scm_webhook) { SCMWebhook.new(payload: {}) }
 
     context 'without the filters key' do
       let(:workflow_instructions) { {} }
@@ -66,17 +64,6 @@ RSpec.describe WorkflowFiltersValidator do
       let(:workflow_instructions) { { filters: { event: 'something', branches: { only: [] } } } }
 
       it { is_expected.to be_valid }
-    end
-
-    context 'with a branches filter for a tag push event' do
-      let(:workflow_instructions) { { filters: { event: 'tag_push', branches: { only: [] } } } }
-      let(:scm_webhook) { SCMWebhook.new(payload: { scm: 'github', event: 'push', ref: 'refs/tags/1.0.0' }) }
-
-      it 'is not valid and has an error message' do
-        subject.valid?
-        expect(subject.errors.full_messages.to_sentence).to eq('Filters for branches are not supported for the tag push event and ' \
-                                                               "Documentation for filters: #{described_class::DOCUMENTATION_LINK}")
-      end
     end
   end
 end

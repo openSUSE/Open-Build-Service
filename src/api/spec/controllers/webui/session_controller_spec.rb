@@ -1,4 +1,3 @@
-require 'rails_helper'
 require 'gssapi'
 
 RSpec.describe Webui::SessionController do
@@ -72,7 +71,7 @@ RSpec.describe Webui::SessionController do
       context "and 'Negotiate' header is not set" do
         it 'informs the client tool (browser) that kerberos authentication is required' do
           expect(response.headers['WWW-Authenticate']).to eq('Negotiate')
-          expect(response.status).to eq(401)
+          expect(response).to have_http_status(:unauthorized)
         end
 
         it 'informs users about failed kerberos authentication and possible cause' do
@@ -128,8 +127,7 @@ RSpec.describe Webui::SessionController do
     let(:username) { 'new_user' }
 
     before do
-      # Fake proxy mode
-      stub_const('CONFIG', CONFIG.merge('proxy_auth_mode' => :on, 'proxy_auth_logout_page' => '/'))
+      allow(Configuration).to receive(:proxy_auth_mode_enabled?).and_return(true)
     end
 
     it 'does not log in any user when no header is set' do
@@ -186,6 +184,7 @@ RSpec.describe Webui::SessionController do
 
       before do
         request.headers['HTTP_X_USERNAME'] = unconfirmed_user.login
+        stub_const('CONFIG', { proxy_auth_logout_page: '/' }.with_indifferent_access)
       end
 
       it 'tracks a failure and send message to RabbitMQ', rabbitmq: '#' do

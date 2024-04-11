@@ -1,6 +1,6 @@
 require 'browser_helper'
 
-RSpec.describe 'Attributes', js: true do
+RSpec.describe 'Attributes', :js do
   let!(:user) { create(:confirmed_user, :with_home) }
   let(:attribute) { create(:attrib, project: user.home_project) }
   # AttribTypes are part of the seeds, so we can reuse them
@@ -62,7 +62,7 @@ RSpec.describe 'Attributes', js: true do
           login other_user
 
           visit index_attribs_path(project: user.home_project_name)
-          expect(page).not_to have_content('Add Attribute')
+          expect(page).to have_no_content('Add Attribute')
         end
       end
 

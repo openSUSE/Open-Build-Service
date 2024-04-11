@@ -39,12 +39,12 @@ namespace :consistency do
   end
 
   desc('Check project for consistency now, specify project with: project=MyProject')
-  task(check: [:environment, :project_environment]) do
+  task(check: %i[environment project_environment]) do
     puts ConsistencyCheckJob.new.check_project(ENV.fetch('project', nil))
   end
 
   desc('Fix inconsitent projects now, specify project with: project=MyProject')
-  task(fix: [:environment, :project_environment]) do
+  task(fix: %i[environment project_environment]) do
     ConsistencyCheckJob.new.fix_project(ENV.fetch('project', nil))
   end
 end
@@ -61,7 +61,7 @@ namespace :jobs do
 
   desc 'Update all changed issues from remote IssueTrackers now'
   task(updateissues: :environment) do
-    IssueTracker.all.each do |t|
+    IssueTracker.find_each do |t|
       next unless t.enable_fetch
 
       t.update_issues
@@ -70,7 +70,7 @@ namespace :jobs do
 
   desc 'Import all issues from remote IssueTrackers now'
   task(enforceissuesupdate: :environment) do
-    IssueTracker.all.each do |t|
+    IssueTracker.find_each do |t|
       next unless t.enable_fetch
 
       t.enforced_update_all_issues

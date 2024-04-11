@@ -1,10 +1,8 @@
-require 'rails_helper'
-
 RSpec.describe Token::Service do
+  subject { token.call(package: 'bar') }
+
   let(:user) { create(:user, login: 'foo') }
   let(:token) { create(:service_token, executor: user) }
-
-  subject { token.call(package: 'bar') }
 
   describe '#call' do
     context 'successful triggered' do

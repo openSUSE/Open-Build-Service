@@ -1,7 +1,9 @@
 class Webui::AttributeController < Webui::WebuiController
   helper :all
-  before_action :set_container, only: [:index, :new, :edit]
-  before_action :set_attribute, only: [:update, :destroy]
+  before_action :set_project, only: %i[index new edit]
+  before_action :set_package, only: %i[index new edit]
+  before_action :set_container, only: %i[index new edit]
+  before_action :set_attribute, only: %i[update destroy]
 
   # raise an exception if authorize has not yet been called.
   after_action :verify_authorized, except: :index
@@ -61,7 +63,7 @@ class Webui::AttributeController < Webui::WebuiController
                     success: 'Attribute was successfully created.'
       end
     else
-      redirect_back(fallback_location: root_path, error: "Saving attribute failed: #{@attribute.errors.full_messages.join(', ')}")
+      redirect_back_or_to root_path, error: "Saving attribute failed: #{@attribute.errors.full_messages.join(', ')}"
     end
   end
 
@@ -72,7 +74,7 @@ class Webui::AttributeController < Webui::WebuiController
       redirect_to edit_attribs_path(project: @attribute.project.to_s, package: @attribute.package.to_s, attribute: @attribute.fullname),
                   success: 'Attribute was successfully updated.'
     else
-      redirect_back(fallback_location: root_path, error: "Updating attribute failed: #{@attribute.errors.full_messages.join(', ')}")
+      redirect_back_or_to root_path, error: "Updating attribute failed: #{@attribute.errors.full_messages.join(', ')}"
     end
   end
 
@@ -80,28 +82,19 @@ class Webui::AttributeController < Webui::WebuiController
     authorize @attribute
 
     @attribute.destroy
-    redirect_back(fallback_location: root_path, success: 'Attribute sucessfully deleted!')
+    redirect_back_or_to root_path, success: 'Attribute sucessfully deleted!'
   end
 
   private
 
+  def set_package
+    return unless params[:package]
+
+    require_package
+  end
+
   def set_container
-    begin
-      @project = Project.get_by_name(params[:project])
-    rescue APIError
-      flash[:error] = "Project not found: #{elide(params[:project])}"
-      redirect_to(controller: 'project') && return
-    end
-    if params[:package]
-      begin
-        @package = Package.get_by_project_and_name(params[:project], params[:package], use_source: false)
-      rescue APIError
-        redirect_to(project_show_path(@project.to_s), error: "Package #{params[:package]} not found") && (return)
-      end
-      @container = @package
-    else
-      @container = @project
-    end
+    @container = @package || @project
   end
 
   def set_attribute
@@ -117,7 +110,7 @@ class Webui::AttributeController < Webui::WebuiController
   # Never trust parameters from the scary internet, only allow the white list through.
   def attrib_params
     params.require(:attrib).permit(:attrib_type_id, :project_id, :package_id,
-                                   values_attributes: [:id, :value, :position, :_destroy],
-                                   issues_attributes: [:id, :name, :issue_tracker_id, :_destroy])
+                                   values_attributes: %i[id value position _destroy],
+                                   issues_attributes: %i[id name issue_tracker_id _destroy])
   end
 end

@@ -14,7 +14,7 @@ class UnregisteredUser < User
     end
 
     # No registering if we use an authentication proxy
-    if CONFIG['proxy_auth_mode'] == :on || CONFIG['ichain_mode'] == :on
+    if ::Configuration.proxy_auth_mode_enabled?
       logger.debug 'Someone tried to register with "proxy_auth_mode" turned on'
       err_msg = if CONFIG['proxy_auth_register_page'].blank?
                   'Sorry, please sign up using the authentication proxy'
@@ -33,7 +33,7 @@ class UnregisteredUser < User
     end
 
     # Turn on registration if it's enabled
-    return true if ['allow', 'confirmation'].include?(::Configuration.registration)
+    return true if %w[allow confirmation].include?(::Configuration.registration)
 
     # This shouldn't happen, but disable registration by default.
     logger.debug "Huh? This shouldn't happen. UnregisteredUser.can_register ran out of options"
@@ -47,7 +47,7 @@ class UnregisteredUser < User
     state = ::Configuration.registration == 'allow' ? 'confirmed' : 'unconfirmed'
 
     newuser = User.new(
-      realname: (opts[:realname] || ''),
+      realname: opts[:realname] || '',
       login: opts[:login],
       password: opts[:password],
       password_confirmation: opts[:password_confirmation],
@@ -72,6 +72,8 @@ end
 #  id                            :integer          not null, primary key
 #  adminnote                     :text(65535)
 #  biography                     :string(255)      default("")
+#  blocked_from_commenting       :boolean          default(FALSE), not null, indexed
+#  color_theme                   :integer          default("system"), not null
 #  deprecated_password           :string(255)      indexed
 #  deprecated_password_hash_type :string(255)
 #  deprecated_password_salt      :string(255)
@@ -84,15 +86,19 @@ end
 #  login_failure_count           :integer          default(0), not null
 #  password_digest               :string(255)
 #  realname                      :string(200)      default(""), not null
-#  state                         :string           default("unconfirmed")
+#  rss_secret                    :string(200)      indexed
+#  state                         :string           default("unconfirmed"), indexed
 #  created_at                    :datetime
 #  updated_at                    :datetime
 #  owner_id                      :integer
 #
 # Indexes
 #
-#  index_users_on_in_beta     (in_beta)
-#  index_users_on_in_rollout  (in_rollout)
-#  users_login_index          (login) UNIQUE
-#  users_password_index       (deprecated_password)
+#  index_users_on_blocked_from_commenting  (blocked_from_commenting)
+#  index_users_on_in_beta                  (in_beta)
+#  index_users_on_in_rollout               (in_rollout)
+#  index_users_on_rss_secret               (rss_secret) UNIQUE
+#  index_users_on_state                    (state)
+#  users_login_index                       (login) UNIQUE
+#  users_password_index                    (deprecated_password)
 #

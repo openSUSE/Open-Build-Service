@@ -9,12 +9,12 @@ RSpec.shared_examples 'a contribution graph' do
     if desktop?
       expect(page).to have_text('Contributions')
     else
-      expect(page).not_to have_text('Contributions')
+      expect(page).to have_no_text('Contributions')
     end
   end
 end
 
-RSpec.describe 'Bootstrap_User Contributions', js: true do
+RSpec.describe 'Bootstrap_User Contributions', :js do
   let!(:user) { create(:confirmed_user) }
 
   context 'without contribution graph option' do
@@ -28,7 +28,7 @@ RSpec.describe 'Bootstrap_User Contributions', js: true do
 
     it 'does not show the contribution table' do
       visit user_path(login: user.login)
-      expect(page).not_to have_text('Contributions')
+      expect(page).to have_no_text('Contributions')
     end
   end
 

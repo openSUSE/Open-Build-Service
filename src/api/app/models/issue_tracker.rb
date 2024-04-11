@@ -9,7 +9,7 @@ class IssueTracker < ApplicationRecord
 
   validates :name, :regex, :url, :kind, presence: true
   validates :name, :regex, uniqueness: { case_sensitive: true }
-  validates :kind, inclusion: { in: ['other', 'bugzilla', 'cve', 'fate', 'trac', 'launchpad', 'sourceforge', 'github', 'jira'] }
+  validates :kind, inclusion: { in: %w[other bugzilla cve fate trac launchpad sourceforge github jira] }
   validates :description, presence: true
   validates :show_url, presence: true
 
@@ -17,7 +17,7 @@ class IssueTracker < ApplicationRecord
   after_save :update_package_meta
 
   # FIXME: issues_updated should not be hidden, but it should also not break our api
-  DEFAULT_RENDER_PARAMS = { except: [:id, :password, :user, :issues_updated, :api_key], dasherize: true, skip_types: true, skip_instruct: true }.freeze
+  DEFAULT_RENDER_PARAMS = { except: %i[id password user issues_updated api_key], dasherize: true, skip_types: true, skip_instruct: true }.freeze
 
   before_validation(on: :create) do
     self.issues_updated ||= Time.now
@@ -114,7 +114,7 @@ class IssueTracker < ApplicationRecord
   end
 
   def self.update_all_issues
-    IssueTracker.all.find_each do |t|
+    IssueTracker.find_each do |t|
       next unless t.enable_fetch
 
       IssueTrackerUpdateIssuesJob.perform_later(t.id)
@@ -172,10 +172,7 @@ class IssueTracker < ApplicationRecord
     end
 
     issue.created_at = if bugzilla_response['creation_time'].present?
-                         # rubocop:disable Rails/Date
-                         # rubocop bug, this is XMLRPC/DateTime not Rails/Date
                          bugzilla_response['creation_time'].to_time
-                         # rubocop:enable Rails/Date
                        else
                          Time.now
                        end

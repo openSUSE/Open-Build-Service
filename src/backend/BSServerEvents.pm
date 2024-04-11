@@ -35,21 +35,34 @@ use strict;
 
 our $gev;	# our event
 
+sub request_done {
+  my ($ev) = @_;
+  delete $ev->{'requestevents'}->{$ev->{'id'}} if $ev->{'requestevents'};
+  my $req = $ev->{'request'};
+  BSServer::log_slow_requests($req->{'conf'}, $req) if $req && $req->{'conf'}->{'slowrequestlog'};
+}
+
+sub request_note {
+  my ($ev, $msg) = @_;
+  my $info = $ev->{'request'} ? BSServer::request_infostr($ev->{'request'}) : $ev->{'peer'};
+  print "$msg for $info";
+}
+
 sub replstream_timeout {
   my ($ev) = @_;
-  print "replstream timeout for $ev->{'peer'}\n";
+  request_note($ev, 'replstream timeout');
   stream_close($ev->{'readev'}, $ev);
 }
 
 sub replrequest_timeout {
   my ($ev) = @_;
-  print "replrequest timeout for $ev->{'peer'}\n";
+  request_note($ev, 'replrequest timeout');
   $ev->{'closehandler'}->($ev) if $ev->{'closehandler'};
   close($ev->{'fd'});
   close($ev->{'nfd'}) if $ev->{'nfd'};
   delete $ev->{'fd'};
   delete $ev->{'nfd'};
-  delete $ev->{'requestevents'}->{$ev->{'id'}} if $ev->{'requestevents'};
+  request_done($ev);
 }
 
 sub replrequest_write {
@@ -63,11 +76,11 @@ sub replrequest_write {
       BSEvents::add($ev);
       return;
     }
-    print "write error for $ev->{'peer'}: $!\n";
+    print "write error for $ev->{'peer'} writing $l bytes: $! [id=$ev->{'id'}]\n";
     $ev->{'closehandler'}->($ev) if $ev->{'closehandler'};
     close($ev->{'fd'});
     close($ev->{'nfd'}) if $ev->{'nfd'};
-    delete $ev->{'requestevents'}->{$ev->{'id'}} if $ev->{'requestevents'};
+    request_done($ev);
     return;
   }
   if ($r == length($ev->{'replbuf'})) {
@@ -75,11 +88,12 @@ sub replrequest_write {
     $ev->{'closehandler'}->($ev) if $ev->{'closehandler'};
     close($ev->{'fd'});
     close($ev->{'nfd'}) if $ev->{'nfd'};
-    delete $ev->{'requestevents'}->{$ev->{'id'}} if $ev->{'requestevents'};
+    request_done($ev);
     return;
   }
   $ev->{'replbuf'} = substr($ev->{'replbuf'}, $r) if $r;
-  BSEvents::add($ev);
+  my $conf = $ev->{'conf'};
+  BSEvents::add($ev, $conf->{'replstream_timeout'});
   return;
 }
 
@@ -92,7 +106,7 @@ sub reply {
     $ev->{'handler'}->($ev) if $ev->{'handler'};
     $ev->{'closehandler'}->($ev) if $ev->{'closehandler'};
     print "$str\n" if defined($str) && $str ne '';
-    delete $ev->{'requestevents'}->{$ev->{'id'}} if $ev->{'requestevents'};
+    request_done($ev);
     return;
   }
   if ($ev->{'streaming'}) {
@@ -152,7 +166,8 @@ sub reply_stream {
   $ev->{'streaming'} = 1;
   $rev->{'writeev'} = $ev;
   $rev->{'handler'} ||= \&stream_read_handler;
-  BSEvents::add($ev, 0);
+  my $conf = $ev->{'conf'};
+  BSEvents::add($ev, $conf->{'replstream_timeout'} || 0);
   BSEvents::add($rev);	# do this last (because of "always" type)
 }
 
@@ -260,10 +275,11 @@ sub reply_cpio {
 
 sub getrequest_timeout {
   my ($ev) = @_;
-  print "getrequest timeout for $ev->{'peer'}\n";
+  print "getrequest timeout for $ev->{'peer'} [id=$ev->{'id'}]\n";
   $ev->{'closehandler'}->($ev) if $ev->{'closehandler'};
   close($ev->{'fd'});
   close($ev->{'nfd'}) if $ev->{'nfd'};
+  request_done($ev);
   delete $ev->{'requestevents'}->{$ev->{'id'}} if $ev->{'requestevents'};
 }
 
@@ -297,19 +313,19 @@ sub getrequest {
         BSEvents::add($ev);
         return;
       }
-      print "read error for $peer: $!\n";
+      print "read error for $peer: $! [id=$ev->{'id'}]\n";
       $ev->{'closehandler'}->($ev) if $ev->{'closehandler'};
       close($ev->{'fd'});
       close($ev->{'nfd'}) if $ev->{'nfd'};
-      delete $ev->{'requestevents'}->{$ev->{'id'}} if $ev->{'requestevents'};
+      request_done($ev);
       return;
     }
     if (!$r) {
-      print "EOF for $peer\n";
+      print "EOF for $peer [id=$ev->{'id'}]\n";
       $ev->{'closehandler'}->($ev) if $ev->{'closehandler'};
       close($ev->{'fd'});
       close($ev->{'nfd'}) if $ev->{'nfd'};
-      delete $ev->{'requestevents'}->{$ev->{'id'}} if $ev->{'requestevents'};
+      request_done($ev);
       return;
     }
     if ($ev->{'reqbuf'} !~ /^(.*?)\r?\n/s) {
@@ -361,15 +377,18 @@ sub newconnect {
   my $peeraddr = accept($newfd, *{$ev->{'fd'}});
   return unless $peeraddr;
   fcntl($newfd, F_SETFL, O_NONBLOCK);
-  my ($peer, $peerport);
-  eval { ($peerport, $peer) = BSServer::getpeerdata({ '__socket' => $ev->{'fd'} }, $peeraddr) };
+  my ($peerip, $peerport);
+  eval { ($peerport, $peerip) = BSServer::getpeerdata({ '__socket' => $ev->{'fd'} }, $peeraddr) };
   my $conf = $ev->{'conf'};
-  my $request = { 'conf' => $conf, 'peer' => $peer, 'starttime' => time(), 'state' => 'receiving', 'server' => $ev->{'server'} };
+  my $request = { 'conf' => $conf, 'starttime' => time(), 'state' => 'receiving', 'server' => $ev->{'server'} };
+  $request->{'peer'} = $peerip || 'unknown';
+  $request->{'peerip'} = $peerip if $peerip;
   $request->{'peerport'} = $peerport if $peerport;
   my $nev = BSEvents::new('read', \&getrequest);
+  $request->{'reqid'} = $nev->{'id'};
   $nev->{'request'} = $request;
   $nev->{'fd'} = $newfd;
-  $nev->{'peer'} = $peer;
+  $nev->{'peer'} = $request->{'peer'};
   $nev->{'timeouthandler'} = \&getrequest_timeout;
   $nev->{'conf'} = $conf;
   if ($conf->{'setkeepalive'}) {
@@ -389,15 +408,16 @@ sub cloneconnect {
   my $nev = BSEvents::new('read', $ev->{'handler'});
   $nev->{'fd'} = $ev->{'nfd'};
   delete $ev->{'nfd'};
-  my $nreq = { %{$ev->{'request'} || {}} };
+  my $nreq = { %{$ev->{'request'} || {}}, 'reqid' => $nev->{'id'} };
   $nev->{'conf'} = $conf;
   $nev->{'request'} = $nreq;
   $nev->{'requestevents'} = $ev->{'requestevents'};
-  my ($peer, $peerport);
-  eval { ($peerport, $peer) = BSServer::getpeerdata({ '__socket' => $nev->{'fd'} }) };
-  $nreq->{'peer'} = $peer || 'unknown';
+  my ($peerip, $peerport);
+  eval { ($peerport, $peerip) = BSServer::getpeerdata({ '__socket' => $nev->{'fd'} }) };
+  $nreq->{'peer'} = $peerip || 'unknown';
+  $nreq->{'peerip'} = $peerip if $peerip;
   $nreq->{'peerport'} = $peerport if $peerport;
-  $nev->{'peer'} = $peer;
+  $nev->{'peer'} = $nreq->{'peer'};
   $nev->{'requestevents'}->{$nev->{'id'}} = $nev;
   if (@reply) {
     if ($conf->{'stdreply'}) {
@@ -435,8 +455,10 @@ sub background {
 
 sub stream_close {
   my ($ev, $wev, $err, $werr) = @_;
+  my $idstr = (($ev || {})->{'id'} || '').'/'.(($wev || {})->{'id'} || '');
+  $idstr = $idstr ? " [id=$idstr]" : '';
   if ($ev) {
-    print "$err\n" if $err;
+    print "$err$idstr\n" if $err;
     BSEvents::rem($ev) if $ev->{'fd'} && !$ev->{'paused'};
     $ev->{'closehandler'}->($ev, $err) if $ev->{'closehandler'};
     close $ev->{'fd'} if $ev->{'fd'};
@@ -444,13 +466,13 @@ sub stream_close {
     delete $ev->{'writeev'};
   }
   if ($wev) {
-    print "$werr\n" if $werr;
+    print "$werr$idstr\n" if $werr;
     BSEvents::rem($wev) if $wev->{'fd'} && !$wev->{'paused'};
     $wev->{'closehandler'}->($wev, $werr) if $wev->{'closehandler'};
     close $wev->{'fd'} if $wev->{'fd'};
     delete $wev->{'fd'};
     delete $wev->{'readev'};
-    delete $wev->{'requestevents'}->{$wev->{'id'}} if $wev->{'requestevents'};
+    request_done($wev);
   }
 }
 
@@ -478,10 +500,10 @@ sub stream_read_handler {
     }
     if (!defined($r)) {
       if ($! == POSIX::EINTR || $! == POSIX::EWOULDBLOCK) {
-        BSEvents::add($ev);
+        BSEvents::add($ev) unless $ev->{'paused'};
         return;
       }
-      print "stream_read_handler: $!\n";
+      print "stream_read_handler: $! [id=$ev->{'id'}]\n";
       # can't do much here, fallthrough in EOF code
     } elsif (defined($ev->{'maxbytes'})) {
       $ev->{'maxbytes'} -= $r;
@@ -489,7 +511,7 @@ sub stream_read_handler {
     }
   }
   if (!$r) {
-#    print "stream_read_handler: EOF\n";
+#    print "stream_read_handler: EOF [id=$ev->{'id'}]\n";
     # filegrows case: just return. we need to continue with some other trigger
     if (defined($r) && $ev->{'filegrows'} && $ev->{'type'} eq 'always' && (!defined($ev->{'maxbytes'}) || $ev->{'maxbytes'} > 0)) {
       return;
@@ -502,9 +524,8 @@ sub stream_read_handler {
         if ($ev->{'makechunks'}) {
 	  # keep those chunks small, otherwise our receiver will choke
           while (length($data) > 4096) {
-	    my $d = substr($data, 0, 4096);
-            $wev->{'replbuf'} .= sprintf("%X\r\n", length($d)).$d."\r\n";
-	    $data = substr($data, 4096);
+	    my $d = substr($data, 0, 4096, '');
+	    $wev->{'replbuf'} .= sprintf("%X\r\n", length($d)).$d."\r\n";
           }
           $wev->{'replbuf'} .= sprintf("%X\r\n", length($data)).$data."\r\n";
 	} else {
@@ -524,7 +545,8 @@ sub stream_read_handler {
     if ($wev && $wev->{'paused'}) {
       if (length($wev->{'replbuf'})) {
         delete $wev->{'paused'};
-        BSEvents::add($wev)
+	my $conf = $wev->{'conf'};
+	BSEvents::add($wev, $conf->{'replstream_timeout'});
       } else {
         stream_close($ev, $wev);
       }
@@ -533,7 +555,8 @@ sub stream_read_handler {
   }
   if ($wev->{'paused'}) {
     delete $wev->{'paused'};
-    BSEvents::add($wev);
+    my $conf = $wev->{'conf'};
+    BSEvents::add($wev, $conf->{'replstream_timeout'});
     # check if add() killed us
     return unless $ev->{'fd'};
   }
@@ -559,10 +582,10 @@ sub stream_write_handler {
   my $r = syswrite($ev->{'fd'}, $ev->{'replbuf'}, $l);
   if (!defined($r)) {
     if ($! == POSIX::EINTR || $! == POSIX::EWOULDBLOCK) {
-      BSEvents::add($ev);
+      BSEvents::add($ev) unless $ev->{'paused'};
       return;
     }
-    print "stream_write_handler: $!\n";
+    print "stream_write_handler: writing $l bytes: $! [id=$ev->{'id'}]\n";
     $ev->{'paused'} = 1;
     # support multiple writers ($ev will be a $jev in that case)
     if ($rev->{'writeev'} != $ev) {
@@ -579,17 +602,17 @@ sub stream_write_handler {
   if ($rev->{'paused'} && length($ev->{'replbuf'}) <= 8192) {
     delete $rev->{'paused'};
     BSEvents::add($rev);
-    if ($rev->{'writeev'} != $ev) {
-      my $wev = $rev->{'writeev'};
-      if ($wev->{'paused'} && length($wev->{'replbuf'})) {
-	#print "pushing old data\n";
-	delete $wev->{'paused'};
-	BSEvents::add($wev);
-      }
+    my $wev = $rev->{'writeev'};
+    if ($wev != $ev && $wev->{'paused'} && length($wev->{'replbuf'})) {
+      #print "pushing old data\n";
+      delete $wev->{'paused'};
+      my $conf = $ev->{'conf'};
+      BSEvents::add($wev, $conf->{'replstream_timeout'});
     }
   }
   if (length($ev->{'replbuf'})) {
-    BSEvents::add($ev);
+    my $conf = $ev->{'conf'};
+    BSEvents::add($ev, $conf->{'replstream_timeout'});
   } else {
     $ev->{'paused'} = 1;
     stream_close($rev, $ev) if $rev->{'eof'};
@@ -634,14 +657,14 @@ sub concheck_handler {
       next if $r;
       if (!defined($r)) {
 	next if $! == POSIX::EINTR || $! == POSIX::EWOULDBLOCK;
-	print "concheck: read error for $ev->{'peer'}: $!\n";
+	print "concheck: read error for $ev->{'peer'}: $! [id=$ev->{'id'}]\n";
       } else {
-	print "concheck: EOF for $ev->{'peer'}\n";
+	print "concheck: EOF for $ev->{'peer'} [id=$ev->{'id'}]\n";
       }
       $ev->{'closehandler'}->($ev) if $ev->{'closehandler'};
       close($ev->{'fd'});
       close($ev->{'nfd'}) if $ev->{'nfd'};
-      delete $requestevents->{$ev->{'id'}};
+      request_done($ev);
       BSEvents::rem($ev);	# just in case...
     }
   }

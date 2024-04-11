@@ -31,7 +31,8 @@ module Event
     def metric_fields
       {
         duration: duration_in_seconds,
-        latency: latency_in_seconds
+        latency: latency_in_seconds,
+        total: total_in_seconds
       }
     end
 
@@ -40,14 +41,25 @@ module Event
                   notifiable_id: ::Package.find_by_project_and_name(payload['project'], payload['package'])&.id)
     end
 
+    def involves_hidden_project?
+      Project.unscoped.find_by(name: payload['project'])&.disabled_for?('access', nil, nil)
+    end
+
     private
 
+    # The seconds spent building
     def duration_in_seconds
       payload['endtime'].to_i - payload['starttime'].to_i
     end
 
+    # The seconds spent waiting for a build slot
     def latency_in_seconds
       payload['starttime'].to_i - payload['readytime'].to_i
+    end
+
+    # The seconds spent waiting and building
+    def total_in_seconds
+      payload['endtime'].to_i - payload['readytime'].to_i
     end
 
     def reason

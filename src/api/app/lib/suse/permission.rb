@@ -8,7 +8,7 @@
 module Suse
   class Permission
     def to_s
-      "OpenSUSE Permissions for user #{@user.login}"
+      "openSUSE Permissions for user #{@user.login}"
     end
 
     def initialize(u)
@@ -61,7 +61,7 @@ module Suse
       false
     end
 
-    def method_missing(perm, *_args, &_block)
+    def method_missing(perm, *_args, &)
       logger.debug "Dynamic Permission requested: <#{perm}>"
 
       if @user

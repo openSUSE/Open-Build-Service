@@ -1,10 +1,4 @@
-require 'rails_helper'
-# WARNING: If you change tests make sure you uncomment this line
-# and start a test backend. Some of the actions
-# require real backend answers for projects/packages.
-# CONFIG['global_write_through'] = true
-
-RSpec.describe EventMailer, vcr: true do
+RSpec.describe EventMailer, :vcr do
   # Needed for X-OBS-URL
   before do
     allow_any_instance_of(Configuration).to receive(:obs_url).and_return('https://build.example.com')
@@ -54,8 +48,7 @@ RSpec.describe EventMailer, vcr: true do
       end
 
       it 'uses display name for FROM if originator exists' do
-        expect(mail.from).to include(originator.email)
-        expect(mail['From'].value).to eq(originator.display_name)
+        expect(mail['From'].value).to eq("\"#{originator.realname} (#{originator.login})\" <unconfigured@openbuildservice.org>")
       end
     end
 
@@ -78,8 +71,8 @@ RSpec.describe EventMailer, vcr: true do
       end
 
       it 'renders links absolute' do
-        expected_html = "<p>Hey <a href=\"https://build.example.com/users/#{receiver.login}\">@#{receiver.login}</a> "
-        expected_html += 'how are things? Look at <a href="https://build.example.com/project/show/apache">bug</a> please.'
+        expected_html = "<p>Hey <a href=\"https://build.example.com/users/#{receiver.login}\" rel=\"nofollow\">@#{receiver.login}</a> "
+        expected_html += 'how are things? Look at <a href="https://build.example.com/project/show/apache" rel="nofollow">bug</a> please.'
         expect(mail.html_part.to_s).to include(expected_html)
       end
 
@@ -93,7 +86,6 @@ RSpec.describe EventMailer, vcr: true do
         expect(mail['X-Mailer'].value).to eq('OBS Notification System')
         expect(mail['X-OBS-URL'].value).to eq('https://build.example.com')
         expect(mail['Auto-Submitted'].value).to eq('auto-generated')
-        expect(mail['Return-Path'].value).to eq('OBS Notification <unconfigured@openbuildservice.org>')
         expect(mail['Sender'].value).to eq('OBS Notification <unconfigured@openbuildservice.org>')
       end
 
@@ -136,10 +128,6 @@ RSpec.describe EventMailer, vcr: true do
           expect(ActionMailer::Base.deliveries).to include(mail)
         end
 
-        it 'sends an email as the user from which the event originates' do
-          expect(mail.from).to include(who.email)
-        end
-
         it 'sends an email to the subscribed user' do
           expect(mail.to).to include(receiver.email)
         end
@@ -162,10 +150,6 @@ RSpec.describe EventMailer, vcr: true do
 
         it 'gets delivered' do
           expect(ActionMailer::Base.deliveries).to include(mail)
-        end
-
-        it 'sends an email as the user from which the event originates' do
-          expect(mail.from).to include(who.email)
         end
 
         it 'sends an email to the user belonging to the subscribed group' do
@@ -204,10 +188,6 @@ RSpec.describe EventMailer, vcr: true do
           expect(ActionMailer::Base.deliveries).to include(mail)
         end
 
-        it 'sends an email as the user from which the event originates' do
-          expect(mail.from).to include(who.email)
-        end
-
         it 'sends an email to the subscribed user' do
           expect(mail.to).to include(receiver.email)
         end
@@ -232,10 +212,6 @@ RSpec.describe EventMailer, vcr: true do
           expect(ActionMailer::Base.deliveries).to include(mail)
         end
 
-        it 'sends an email as the user from which the event originates' do
-          expect(mail.from).to include(who.email)
-        end
-
         it 'sends an email to the user belonging to the subscribed group' do
           expect(mail.to).to include(receiver.email)
         end
@@ -252,12 +228,137 @@ RSpec.describe EventMailer, vcr: true do
       end
     end
 
+    # TODO: Remove this test after all `Event::CreateReport` records are migrated to the STI report classes
+    context 'for an event of type Event::CreateReport' do
+      let(:admin) { create(:admin_user) }
+      let!(:subscription) { create(:event_subscription_create_report, user: admin) }
+      let(:report) { create(:report, reason: 'Because reasons') }
+      let(:package) { report.reportable.commentable }
+      let(:mail) { EventMailer.with(subscribers: Event::CreateReport.last.subscribers, event: Event::CreateReport.last).notification_email.deliver_now }
+
+      before do
+        Event::CreateReport.create({ id: report.id, user_id: report.user_id, reportable_id: report.reportable_id,
+                                     reportable_type: report.reportable_type, reason: report.reason })
+      end
+
+      it 'gets delivered' do
+        expect(ActionMailer::Base.deliveries).to include(mail)
+      end
+
+      it 'contains the correct text' do
+        expect(mail.body.encoded).to include('reported a comment for the following reason:')
+        expect(mail.body.encoded).to include('Because reasons')
+      end
+
+      it 'renders link to the page of the comment' do
+        expect(mail.body.encoded).to include("<a href=\"https://build.example.com/package/show/#{package.project}/#{package}#comments-list\">#{package}</a>")
+      end
+    end
+
+    context 'for an event of type Event::ReportForProject' do
+      let(:admin) { create(:admin_user) }
+      let!(:subscription) { create(:event_subscription_report_for_project, user: admin) }
+      let(:mail) { EventMailer.with(subscribers: Event::ReportForProject.last.subscribers, event: Event::ReportForProject.last).notification_email.deliver_now }
+      let(:project) { create(:project, name: 'foo') }
+
+      before do
+        create(:report, reportable: project, reason: 'Because reasons')
+      end
+
+      it 'gets delivered' do
+        expect(ActionMailer::Base.deliveries).to include(mail)
+      end
+
+      it 'contains the correct text' do
+        expect(mail.body.encoded).to include('reported a project for the following reason:')
+        expect(mail.body.encoded).to include('Because reasons')
+      end
+
+      it 'renders link to the project page' do
+        expect(mail.body.encoded).to include('<a href="https://build.example.com/project/show/foo#comments-list">foo</a>')
+      end
+    end
+
+    context 'for an event of type Event::ReportForPackage' do
+      let(:admin) { create(:admin_user) }
+      let!(:subscription) { create(:event_subscription_report_for_package, user: admin) }
+      let(:mail) { EventMailer.with(subscribers: Event::ReportForPackage.last.subscribers, event: Event::ReportForPackage.last).notification_email.deliver_now }
+      let(:project) { create(:project, name: 'foo') }
+      let(:package) { create(:package, name: 'bar', project: project) }
+
+      before do
+        create(:report, reportable: package, reason: 'Because reasons')
+      end
+
+      it 'gets delivered' do
+        expect(ActionMailer::Base.deliveries).to include(mail)
+      end
+
+      it 'contains the correct text' do
+        expect(mail.body.encoded).to include('reported a package for the following reason:')
+        expect(mail.body.encoded).to include('Because reasons')
+      end
+
+      it 'renders link to the package page' do
+        expect(mail.body.encoded).to include('<a href="https://build.example.com/package/show/foo/bar#comments-list">bar</a>')
+      end
+    end
+
+    context 'for an event of type Event::ReportForUser' do
+      let(:admin) { create(:admin_user) }
+      let!(:subscription) { create(:event_subscription_report_for_user, user: admin) }
+      let(:mail) { EventMailer.with(subscribers: Event::ReportForUser.last.subscribers, event: Event::ReportForUser.last).notification_email.deliver_now }
+      let(:user) { create(:user, login: 'hans') }
+
+      before do
+        create(:report, reportable: user, reason: 'Because reasons')
+      end
+
+      it 'gets delivered' do
+        expect(ActionMailer::Base.deliveries).to include(mail)
+      end
+
+      it 'contains the correct text' do
+        expect(mail.body.encoded).to include('reported a user for the following reason:')
+        expect(mail.body.encoded).to include('Because reasons')
+      end
+
+      it 'renders link to the user page' do
+        expect(mail.body.encoded).to include('<a href="https://build.example.com/users/hans">hans</a>')
+      end
+    end
+
+    context 'for an event of type Event::ReportForComment' do
+      let(:admin) { create(:admin_user) }
+      let!(:subscription) { create(:event_subscription_report_for_comment, user: admin) }
+      let(:mail) { EventMailer.with(subscribers: Event::ReportForComment.last.subscribers, event: Event::ReportForComment.last).notification_email.deliver_now }
+      let(:project) { create(:project, name: 'foo') }
+      let(:comment) { create(:comment_project, commentable: project) }
+
+      before do
+        create(:report, reportable: comment, reason: 'Because reasons')
+      end
+
+      it 'gets delivered' do
+        expect(ActionMailer::Base.deliveries).to include(mail)
+      end
+
+      it 'contains the correct text' do
+        expect(mail.body.encoded).to include('reported a comment for the following reason:')
+        expect(mail.body.encoded).to include('Because reasons')
+      end
+
+      it 'renders link to the page of the comment' do
+        expect(mail.body.encoded).to include('<a href="https://build.example.com/project/show/foo#comments-list">foo</a>')
+      end
+    end
+
     context 'when the subscriber has no email' do
+      subject! { EventMailer.with(subscribers: subscribers, event: event).notification_email.deliver_now }
+
       let(:group) { create(:group, email: nil) }
       let(:event) { Event::RequestCreate.first }
       let(:subscribers) { [group] }
-
-      subject! { EventMailer.with(subscribers: subscribers, event: event).notification_email.deliver_now }
 
       it 'does not get delivered' do
         expect(ActionMailer::Base.deliveries).to be_empty
@@ -281,14 +382,12 @@ RSpec.describe EventMailer, vcr: true do
       let(:faillog) { "invalid byte sequence ->\xD3'" }
 
       before do
-        allow(event_stub).to receive(:faillog).and_return(faillog)
-        allow(event_stub).to receive(:payload).and_return(expanded_payload)
+        allow(event_stub).to receive_messages(faillog: faillog, payload: expanded_payload)
       end
 
       it 'renders the headers' do
         expect(mail.subject).to have_text('Build failure of project_2/package_2 in repository_2/i586')
         expect(mail.to).to eq([recipient.email])
-        expect(mail.from).to eq([from.email])
       end
 
       context 'and there is a payload' do
@@ -301,8 +400,215 @@ RSpec.describe EventMailer, vcr: true do
         let(:faillog) { nil }
 
         it 'renders the body, but does not have a build log' do
-          expect(mail.body.encoded).not_to have_text('Last lines of build log:')
+          expect(mail.body.encoded).to have_no_text('Last lines of build log:')
         end
+      end
+    end
+
+    context 'for an event of type Event::WorkflowRunFail' do
+      let(:token) { create(:workflow_token, executor: receiver) }
+      let(:workflow_run) { create(:workflow_run, token: token) }
+      let!(:subscription) { create(:event_subscription_workflow_run_fail, user: receiver) }
+      let(:mail) { EventMailer.with(subscribers: Event::WorkflowRunFail.last.subscribers, event: Event::WorkflowRunFail.last).notification_email.deliver_now }
+
+      before do
+        login(receiver)
+      end
+
+      context 'when the workflow run fails' do
+        before do
+          workflow_run.update_as_failed('Failed for whatever reason')
+        end
+
+        it 'gets delivered' do
+          expect(ActionMailer::Base.deliveries).to include(mail)
+        end
+
+        it 'has a subject' do
+          expect(mail.subject).to eq('Workflow run failed on Pull request')
+        end
+
+        it 'has the right subscribers' do
+          expect(mail.to).to eq(Event::WorkflowRunFail.last.subscribers.map(&:email))
+        end
+
+        it 'renders links absolute' do
+          expect(mail.body.encoded).to include('Check the details about this ' \
+                                               "<a href=\"https://build.example.com/my/tokens/#{token.id}/workflow_runs/#{workflow_run.id}\">Workflow Run</a>")
+        end
+
+        it { expect(mail.text_part.body.to_s).to include('A workflow run failed for Pull request #1, opened') }
+        it { expect(mail.html_part.body.to_s).to include('A workflow run failed for Pull request #1, opened') }
+        it { expect(mail.html_part.body.to_s).to include("on repository #{workflow_run.repository_owner}/#{workflow_run.repository_name}") }
+      end
+    end
+
+    context 'for an event of type Event::ClearedDecision' do
+      let(:admin) { create(:admin_user) }
+      let(:reporter) { create(:confirmed_user) }
+      let(:report) { create(:report, user: reporter) }
+      let(:package) { report.reportable.commentable }
+      let!(:subscription) { create(:event_subscription_cleared_decision, user: reporter) }
+      let(:decision) { create(:decision, :cleared, moderator: admin, reason: 'This is NOT spam.', reports: [report]) }
+      let(:event) { Event::ClearedDecision.last }
+      let(:mail) { EventMailer.with(subscribers: event.subscribers, event: event).notification_email.deliver_now }
+
+      before do
+        login(admin)
+        decision
+      end
+
+      it 'gets delivered' do
+        expect(ActionMailer::Base.deliveries).to include(mail)
+      end
+
+      it 'is sent to the reporter' do
+        expect(mail.to).to contain_exactly(reporter.email)
+      end
+
+      it 'has a subject' do
+        expect(mail.subject).to eq("Cleared #{decision.reports.first.reportable&.class&.name} Report")
+      end
+
+      it 'contains the correct text' do
+        expect(mail.body.encoded).to include("'#{decision.moderator}' decided to clear the report. This is the reason:")
+        expect(mail.body.encoded).to include('This is NOT spam.')
+      end
+
+      it 'renders link to the page of the comment' do
+        expect(mail.body.encoded).to include("<a href=\"https://build.example.com/package/show/#{package.project}/#{package}#comments-list\">#{package}</a>")
+      end
+    end
+
+    context 'for an event of type Event::FavoredDecision' do
+      let(:admin) { create(:admin_user) }
+      let(:offender) { create(:confirmed_user, login: 'offender') } # user who wrote the offensive comment
+      let(:reporter) { create(:confirmed_user, login: 'reporter') }
+
+      let(:comment) { create(:comment_project, user: offender) }
+      let(:project) { comment.commentable }
+      let(:report) { create(:report, user: reporter, reportable: comment) }
+
+      let!(:reporter_subscription) { create(:event_subscription_favored_decision, user: reporter) }
+      let!(:offender_subscription) { create(:event_subscription_favored_decision, user: offender, receiver_role: 'offender') }
+
+      let(:decision) { create(:decision, :favor, moderator: admin, reason: 'This is spam for sure.', reports: [report]) }
+      let(:event) { Event::FavoredDecision.last }
+      let(:mail) { EventMailer.with(subscribers: event.subscribers, event: event).notification_email.deliver_now }
+
+      before do
+        login(admin)
+        decision
+      end
+
+      it 'gets delivered' do
+        expect(ActionMailer::Base.deliveries).to include(mail)
+      end
+
+      it 'is sent to the reporter and offender' do
+        expect(mail.to).to contain_exactly(reporter.email, offender.email)
+      end
+
+      it 'has a subject' do
+        expect(mail.subject).to eq("Favored #{decision.reports.first.reportable&.class&.name} Report")
+      end
+
+      it 'contains the correct text' do
+        expect(mail.body.encoded).to include("'#{decision.moderator}' decided to favor the report. This is the reason:")
+        expect(mail.body.encoded).to include('This is spam for sure.')
+      end
+
+      it 'renders link to the page of the comment' do
+        expect(mail.body.encoded).to include("<a href=\"https://build.example.com/project/show/#{project}#comments-list\">#{project}</a>")
+      end
+    end
+
+    context 'for an event of type Event::AppealCreated' do
+      let(:moderator) { create(:admin_user) }
+      let(:offender) { create(:confirmed_user, login: 'offender') } # user who wrote the offensive comment
+      let(:reporter) { create(:confirmed_user, login: 'reporter') }
+      let(:appellant) { create(:confirmed_user, login: 'appellant') }
+
+      let(:comment) { create(:comment_project, user: offender) }
+      let(:project) { comment.commentable }
+      let(:report) { create(:report, user: reporter, reportable: comment) }
+
+      let!(:moderator_subscription) { create(:event_subscription_appeal_created, user: moderator) }
+
+      let(:decision) { create(:decision, :favor, moderator: moderator, reason: 'This is spam for sure.', reports: [report]) }
+      let(:appeal) { create(:appeal, appellant: appellant, decision: decision, reason: 'I strongly disagree!') }
+      let(:event) { Event::AppealCreated.last }
+      let(:mail) { EventMailer.with(subscribers: event.subscribers, event: event).notification_email.deliver_now }
+
+      before do
+        login(moderator)
+        appeal
+      end
+
+      it 'gets delivered' do
+        expect(ActionMailer::Base.deliveries).to include(mail)
+      end
+
+      it 'is sent to the moderator' do
+        expect(mail.to).to contain_exactly(decision.moderator.email)
+      end
+
+      it 'has a subject' do
+        expect(mail.subject).to eq("Appeal to #{decision.reports.first.reportable&.class&.name} decision")
+      end
+
+      it 'contains the correct text' do
+        expect(mail.body.encoded).to include("'#{appellant}' decided to appeal to the decision '#{decision.reason}'. This is the reason:")
+        expect(mail.body.encoded).to include('I strongly disagree!')
+      end
+
+      it 'renders link to the page of the comment' do
+        expect(mail.body.encoded).to include("<a href=\"https://build.example.com/project/show/#{project}#comments-list\">#{project}</a>")
+      end
+    end
+
+    context 'for an event of type Event::AppealCreated of a no longer existing reportable object' do
+      let(:moderator) { create(:admin_user) }
+      let(:offender) { create(:confirmed_user, login: 'offender') } # user who wrote the offensive comment
+      let(:reporter) { create(:confirmed_user, login: 'reporter') }
+      let(:appellant) { create(:confirmed_user, login: 'appellant') }
+
+      let(:comment) { create(:comment_project, user: offender) }
+      let(:project) { comment.commentable }
+      let(:report) { create(:report, user: reporter, reportable: comment) }
+
+      let!(:moderator_subscription) { create(:event_subscription_appeal_created, user: moderator) }
+
+      let(:decision) { create(:decision, :favor, moderator: moderator, reason: 'This is spam for sure.', reports: [report]) }
+      let(:appeal) { create(:appeal, appellant: appellant, decision: decision, reason: 'I strongly disagree!') }
+      let(:event) { Event::AppealCreated.last }
+      let(:mail) { EventMailer.with(subscribers: event.subscribers, event: event).notification_email.deliver_now }
+
+      before do
+        login(moderator)
+        comment.destroy!
+        appeal
+      end
+
+      it 'gets delivered' do
+        expect(ActionMailer::Base.deliveries).to include(mail)
+      end
+
+      it 'is sent to the moderator' do
+        expect(mail.to).to contain_exactly(decision.moderator.email)
+      end
+
+      it 'has a subject' do
+        expect(mail.subject).to eq("Appeal to #{decision.reports.first.reportable&.class&.name} decision")
+      end
+
+      it 'contains the correct text' do
+        expect(mail.body.encoded).to include("'#{appellant}' decided to appeal to the decision '#{decision.reason}'. This is the reason:")
+        expect(mail.body.encoded).to include('I strongly disagree!')
+      end
+
+      it 'renders the text about the missing reported comment' do
+        expect(mail.body.encoded).to include("The reported #{decision.reports.first.reportable&.class&.name&.downcase} does not exist anymore.")
       end
     end
   end

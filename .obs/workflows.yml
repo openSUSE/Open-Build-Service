@@ -1,16 +1,18 @@
+version: '1.1'
 testbuild:
   steps:
-    - link_package:
+    - branch_package:
         source_project: OBS:Server:Unstable
         source_package: obs-server
         target_project: home:bs-team
+        add_repositories: disable
     - configure_repositories:
         project: home:bs-team
         repositories:
-          - name: 15.4
+          - name: 15.5
             paths:
               - target_project: OBS:Server:Unstable
-                target_repository: 15.4
+                target_repository: 15.5
             architectures:
               - x86_64
   filters:

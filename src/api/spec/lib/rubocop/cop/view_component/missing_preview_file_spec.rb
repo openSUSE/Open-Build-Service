@@ -1,4 +1,4 @@
-require 'rails_helper'
+require 'support/rubocop'
 require './lib/rubocop/cop/view_component/missing_preview_file'
 
 RSpec.describe RuboCop::Cop::ViewComponent::MissingPreviewFile, :config do

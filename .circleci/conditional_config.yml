@@ -9,7 +9,7 @@ parameters:
     type: boolean
     default: false
 
-  run-passenger-tests:
+  run-passenger-and-ruby-default-gem-tests:
     type: boolean
     default: false
 
@@ -99,6 +99,7 @@ aliases:
     name: Compress Log Artifacts
     working_directory: src/api/log
     command: for i in *.log; do xz -T 0 -v $i; done
+    when: always
 
   - &compress_capybara_artifacts
     name: Compress Capybara Artifacts
@@ -109,6 +110,7 @@ aliases:
       export NUMBER_OF_FAILED_TESTS=`ls -1|wc -l`
       # Only compress if there are more than 20 tests failed...
       if test $NUMBER_OF_FAILED_TESTS -gt 40; then mkdir capybara; mv  -v *.png *.html capybara; tar cvJf capybara.tar.xz capybara; rm -rf capybara; fi
+    when: always
 
   - &install_circle_cli
     name: Install CircleCI command line
@@ -132,7 +134,7 @@ aliases:
 jobs:
   pipeline_settings:
     docker:
-      - image: opensuse/leap:15.3
+      - image: opensuse/leap:15.5
     steps:
       - run: echo "run-apidocs-linter is << pipeline.parameters.run-apidocs-linter >>"
       - run: echo "run-backend-tests is << pipeline.parameters.run-backend-tests >>"
@@ -307,7 +309,7 @@ jobs:
             bundle exec rake db:seed
             bundle exec rake data:migrate
 
-  passenger_tests:
+  passenger_and_ruby_default_gem_tests:
     docker:
       - <<: *frontend_base
     steps:
@@ -318,6 +320,7 @@ jobs:
           command: |
             make -C src/api test_rake
             make -C src/api test_rack
+            make -C src/api test_base64_gem
 
   spider:
     parallelism: 2
@@ -386,7 +389,7 @@ jobs:
           command: |
             curl -LOs https://codeclimate.com/downloads/test-reporter/test-reporter-latest-linux-amd64
             chmod +x test-reporter-latest-linux-amd64
-            ./test-reporter-latest-linux-amd64 format-coverage coverage/coverage.xml -t cobertura
+            ./test-reporter-latest-linux-amd64 format-coverage --add-prefix src/api/ coverage/coverage.xml -t cobertura
             ./test-reporter-latest-linux-amd64 upload-coverage
       - run:
           name: Compress coverage results
@@ -500,11 +503,11 @@ workflows:
           requires:
             - checkout_code
 
-  passenger_tests:
-    when: << pipeline.parameters.run-passenger-tests >>
+  passenger_and_ruby_default_gem_tests:
+    when: << pipeline.parameters.run-passenger-and-ruby-default-gem-tests >>
     jobs:
       - checkout_code
-      - passenger_tests:
+      - passenger_and_ruby_default_gem_tests:
           requires:
             - checkout_code
 
@@ -554,4 +557,3 @@ workflows:
       - feature:
           requires:
             - linters
-

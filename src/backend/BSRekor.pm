@@ -132,4 +132,33 @@ sub upload_intoto {
   return upload_entry($server, $entry);
 }
 
+sub upload_intoto_v2 {
+  my ($server, $envelope, $pubkey) = @_;
+  my $e = JSON::XS::decode_json($envelope);
+  $_->{'publicKey'} ||= $pubkey for @{$e->{'signatures'} || []};
+  my $spec = {
+    'content' => { 'envelope' => $e },
+  };
+  my $entry = {
+    'kind' => 'intoto',
+    'apiVersion' => '0.0.2',
+    'spec' => $spec,
+  };
+  return upload_entry($server, $entry);
+}
+
+sub upload_dsse {
+  my ($server, $envelope, $pubkey) = @_;
+  my $verifier = mime_encode($pubkey);
+  my $spec = {
+    'proposedContent' => { 'envelope' => $envelope, 'verifiers' => [ $verifier ] },
+  };
+  my $entry = {
+    'kind' => 'dsse',
+    'apiVersion' => '0.0.1',
+    'spec' => $spec,
+  };
+  return upload_entry($server, $entry);
+}
+
 1;

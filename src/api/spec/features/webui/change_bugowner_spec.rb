@@ -1,6 +1,6 @@
 require 'browser_helper'
 
-RSpec.describe 'ChangeBugowner', js: true do
+RSpec.describe 'ChangeBugowner', :js do
   let!(:bugowner) { create(:confirmed_user, :with_home, login: 'Iggy') }
   let!(:package) { create(:package, name: 'TestPack', project: project) }
   let(:project) { Project.find_by(name: 'home:Iggy') }
@@ -54,7 +54,7 @@ RSpec.describe 'ChangeBugowner', js: true do
       fill_in :description, with: 'Replace current bugowner by something else'
       click_button 'Submit'
       expect(page).to have_text("#{bugowner.name} (#{bugowner.login}) wants the user #{new_bugowner.name} (#{new_bugowner.login}) to become bugowner (previous bugowners will be deleted)")
-      expect(page).not_to have_text('Heroes')
+      expect(page).to have_no_text('Heroes')
     end
   end
 end

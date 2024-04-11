@@ -1,4 +1,3 @@
-require 'rails_helper'
 require Rails.root.join('db/data/20200326170855_remove_obsolete_notifications.rb')
 
 RSpec.describe RemoveObsoleteNotifications, type: :migration do
@@ -31,8 +30,8 @@ RSpec.describe RemoveObsoleteNotifications, type: :migration do
     end
 
     it 'deletes all the notifications except CommentForProject and CommentForPackage' do
-      expect(Notification.all.count).to eq(2)
-      expect(Notification.all.pluck(:event_type)).to contain_exactly('Event::CommentForProject', 'Event::CommentForPackage')
+      expect(Notification.count).to eq(2)
+      expect(Notification.pluck(:event_type)).to contain_exactly('Event::CommentForProject', 'Event::CommentForPackage')
     end
   end
 end

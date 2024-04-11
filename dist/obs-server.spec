@@ -199,7 +199,8 @@ Requires(pre):  shadow
 %endif
 
 %if 0%{?suse_version:1}
-Recommends:     yum yum-metadata-parser repoview dpkg
+Recommends:     yum yum-metadata-parser repoview 
+Recommends:     dpkg >= 1.20
 Recommends:     deb >= 1.5
 Recommends:     lvm2
 Recommends:     openslp-server
@@ -498,9 +499,7 @@ make
 
 # combine swagger yaml files to one big yaml file by resolving all references
 # and replace the development version
-pushd dist/
-./resolve_swagger_yaml.rb -i ../src/api/public/apidocs-new/OBS-v2.10.50.yaml -o ../src/api/public/apidocs-new/OBS-v2.10.50.yaml -f
-popd
+make resolve_swagger_yaml
 
 %install
 export DESTDIR=$RPM_BUILD_ROOT
@@ -771,8 +770,6 @@ rmdir %{obs_backend_data_dir} 2> /dev/null || :
 %service_del_postun -r obsclouduploadserver.service
 
 %pre -n obs-api
-getent passwd obsapidelayed >/dev/null || \
-  /usr/sbin/useradd -r -s /bin/bash -c "User for build service api delayed jobs" -d %{__obs_api_prefix} -g %{apache_group} obsapidelayed
 %service_add_pre %{obs_api_support_scripts}
 
 # On upgrade keep the values for the %post script
@@ -782,10 +779,9 @@ if [ "$1" == 2 ]; then
   if [ -e /etc/init.d/rc3.d/S50obsapidelayed ];then
     touch %{_rundir}/enable_obs-api-support.target
   fi
-  if systemctl --quiet is-active  obsapidelayed.service;then
-    touch %{_rundir}/start_obs-api-support.target
-    systemctl stop    obsapidelayed.service
-    systemctl disable obsapidelayed.service
+  if systemctl --quiet is-active obsapidelayed.service; then
+    touch %{_rundir}/enable_obs-api-support.target
+    systemctl disable --now obsapidelayed.service || :
   fi
 fi
 
@@ -828,12 +824,16 @@ touch %{__obs_api_prefix}/last_deploy || true
 # This must be done after %%service_add_post. Otherwise the distribution preset is
 # take, which is disabled in case of obs-api-support.target
 if [ -e %{_rundir}/enable_obs-api-support.target ];then
-  systemctl enable obs-api-support.target
+  # Don't break on errors if ENV variable SYSTEMD_OFFLINE=1 is set
+  # like in obs build script
+  if [ "$SYSTEMD_OFFLINE" -gt 0 ];then
+    systemctl enable --now obs-api-support.target || true
+  else
+    # if SYSTEMD_OFFLINE=1 is not set, users should get an error
+    # reported
+    systemctl enable --now obs-api-support.target
+  fi
   rm %{_rundir}/enable_obs-api-support.target
-fi
-if [ -e %{_rundir}/start_obs-api-support.target ];then
-  systemctl start  obs-api-support.target
-  rm %{_rundir}/start_obs-api-support.target
 fi
 
 %postun -n obs-api

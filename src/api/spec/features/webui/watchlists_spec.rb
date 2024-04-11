@@ -1,6 +1,6 @@
 require 'browser_helper'
 
-RSpec.describe 'Watchlists', js: true, vcr: true do
+RSpec.describe 'Watchlists', :js, :vcr do
   let(:user) { create(:confirmed_user, :with_home, login: 'kody') }
   let(:project_a) { create(:project, name: 'watchlist_test_project_a') }
   let(:project_b) { create(:project, name: 'watchlist_test_project_b') }
@@ -11,7 +11,7 @@ RSpec.describe 'Watchlists', js: true, vcr: true do
     login user
 
     visit project_show_path(project: project_a)
-    click_on('Watchlist')
+    click_link('Watchlist')
     expect(page).to have_content('Projects you are watching')
     expect(page).to have_content('There are no projects in the watchlist yet')
     expect(page).to have_content('There are no packages in the watchlist yet')
@@ -20,14 +20,14 @@ RSpec.describe 'Watchlists', js: true, vcr: true do
     # Add project
     click_link('Watch this project')
     within('.watchlist-collapse') do
-      expect(page).not_to have_content('There are no projects in the watchlist yet')
+      expect(page).to have_no_content('There are no projects in the watchlist yet')
       expect(page).to have_content('Remove this project from Watchlist')
       expect(page).to have_content(project_a.name)
     end
 
     # Add another project
     visit project_show_path(project: project_b)
-    click_on('Watchlist')
+    click_link('Watchlist')
     click_link('Watch this project')
     within('.watchlist-collapse') do
       expect(page).to have_content('Remove this project from Watchlist')
@@ -37,7 +37,7 @@ RSpec.describe 'Watchlists', js: true, vcr: true do
 
     # Add package
     visit package_show_path(project: project_a.name, package: package.name)
-    click_on('Watchlist')
+    click_link('Watchlist')
     click_link('Watch this package')
     within('.watchlist-collapse') do
       expect(page).to have_content('Remove this package from Watchlist')
@@ -48,7 +48,7 @@ RSpec.describe 'Watchlists', js: true, vcr: true do
 
     # Add request
     visit request_show_path(number: request.number)
-    click_on('Watchlist')
+    click_link('Watchlist')
     click_link('Watch this request')
     within('.watchlist-collapse') do
       expect(page).to have_content('Remove this request from Watchlist')
@@ -67,7 +67,7 @@ RSpec.describe 'Watchlists', js: true, vcr: true do
       expect(page).to have_content(project_a.name)
       expect(page).to have_content(project_b.name)
       expect(page).to have_content(package.name)
-      expect(page).not_to have_content("##{request.number} Submit")
+      expect(page).to have_no_content("##{request.number} Submit")
     end
   end
 end

@@ -1,6 +1,14 @@
 class NotificationsFinder
+  EVENT_TYPES = ['Event::CreateReport', 'Event::ReportForRequest', 'Event::ReportForProject', 'Event::ReportForPackage', 'Event::ReportForComment',
+                 'Event::ReportForUser', 'Event::ClearedDecision', 'Event::FavoredDecision', 'Event::AppealCreated'].freeze
+
   def initialize(relation = Notification.all)
-    @relation = relation.order(created_at: :desc)
+    @relation = if Flipper.enabled?(:content_moderation, User.session)
+                  relation.order(created_at: :desc)
+                else
+                  # TODO: Remove `Event::CreateReport` after all existing records are migrated to the new STI classes
+                  relation.where.not(event_type: EVENT_TYPES).order(created_at: :desc)
+                end
   end
 
   def read
@@ -39,6 +47,19 @@ class NotificationsFinder
     @relation.where(event_type: 'Event::BuildFail', delivered: false)
   end
 
+  def for_reports
+    # TODO: Remove `Event::CreateReport` after all existing records are migrated to the new STI classes
+    @relation.where(event_type: EVENT_TYPES, delivered: false)
+  end
+
+  def for_workflow_runs
+    @relation.where(event_type: 'Event::WorkflowRunFail', delivered: false)
+  end
+
+  def for_appealed_decisions
+    @relation.where(event_type: 'Event::AppealCreated', delivered: false)
+  end
+
   # rubocop:disable Metrics/CyclomaticComplexity
   # We need to refactor this method, the `case` statement is way too big
   def for_notifiable_type(type = 'unread')
@@ -61,6 +82,12 @@ class NotificationsFinder
       notifications.for_relationships_deleted
     when 'build_failures'
       notifications.for_failed_builds
+    when 'reports'
+      notifications.for_reports
+    when 'workflow_runs'
+      notifications.for_workflow_runs
+    when 'appealed_decisions'
+      notifications.for_appealed_decisions
     else
       notifications.unread
     end

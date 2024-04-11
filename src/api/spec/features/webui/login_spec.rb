@@ -1,7 +1,7 @@
 require 'browser_helper'
 require 'ldap'
 
-RSpec.describe 'Login', js: true do
+RSpec.describe 'Login', :js do
   let!(:user) { create(:confirmed_user, :with_home, login: 'proxy_user') }
   let(:admin) { create(:admin_user) }
 
@@ -29,7 +29,7 @@ RSpec.describe 'Login', js: true do
     expect(page).to have_link('Profile', visible: :all)
   end
 
-  it 'login via widget', vcr: true do
+  it 'login via widget', :vcr do
     visit root_path
     within(desktop? ? '#top-navigation-area' : '#bottom-navigation-area') do
       click_link('Log In')
@@ -44,7 +44,7 @@ RSpec.describe 'Login', js: true do
     expect(page).to have_link('Your Home Project', visible: :all)
   end
 
-  it 'login with wrong data', vcr: true do
+  it 'login with wrong data', :vcr do
     visit root_path
     within(desktop? ? '#top-navigation-area' : '#bottom-navigation-area') do
       click_link('Log In')
@@ -71,7 +71,7 @@ RSpec.describe 'Login', js: true do
       click_menu_link('Places', 'Logout')
     end
 
-    expect(page).not_to have_css('a#link-to-user-home')
+    expect(page).to have_no_css('a#link-to-user-home')
     expect(page).to have_link('Log')
   end
 
@@ -79,7 +79,7 @@ RSpec.describe 'Login', js: true do
     include_context 'setup ldap mock with user mock'
     include_context 'an ldap connection'
 
-    let(:ldap_user) { double(:ldap_user, to_hash: { 'dn' => 'tux', 'sn' => ['John', 'Smith'] }) }
+    let(:ldap_user) { double(:ldap_user, to_hash: { 'dn' => 'tux', 'sn' => %w[John Smith] }) }
 
     before do
       stub_const('CONFIG', CONFIG.merge('ldap_mode' => :on,

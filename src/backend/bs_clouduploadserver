@@ -389,6 +389,7 @@ my $dispatches_ajax = [
 
 
 my $conf = {
+  'runname' => 'bs_clouduploadserver',
   'port' => $port,
   'proto' => $proto,
   'dispatches' => $dispatches,
@@ -402,5 +403,7 @@ my $aconf = {
   'dispatches' => $dispatches_ajax,
 };
 
-BSStdServer::server('bs_clouduploadserver', \@ARGV, $conf, $aconf);
+%$conf = (%$conf, %{$BSConfig::clouduploadserver_extraconf}) if $BSConfig::clouduploadserver_extraconf;
+
+BSStdServer::server('clouduploadserver', \@ARGV, $conf, $aconf);
 

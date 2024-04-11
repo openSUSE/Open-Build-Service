@@ -38,13 +38,12 @@ use strict;
 
 my %hostlookupcache;
 my %cookiestore;        # our session store to keep iChain fast
-my $tossl;
+
+my $rpc_connect_timeout = 60;
 
 sub import {
   if (grep {$_ eq ':https'} @_) {
-    require BSSSL;
-    $tossl = \&BSSSL::tossl;
-    BSRPC::import(':https');
+    BSRPC::import(':https') unless $BSRPC::tossl;
   }
 }
 
@@ -252,6 +251,17 @@ sub serialize_deljob {
   }
 }
 
+sub serialize_waiting {
+  my ($file) = @_;
+  return @{$serializations_waiting{$file} || []};
+}
+
+sub serlialize_advance {
+  my ($file, $jev) = @_;
+  return unless $serializations_waiting{$file};
+  my @waiting = grep {$_ != $jev} @{$serializations_waiting{$file}};
+  @{$serializations_waiting{$file}} = ($jev, @waiting) if @waiting != @{$serializations_waiting{$file}};
+}
 
 
 ###########################################################################
@@ -372,9 +382,9 @@ sub rpc_authenticate {
     local $BSServerEvents::gev = $jev;
     my $auth;
     eval {
-      $auth = $param->{'authenticator'}->($param, $headers->{'www-authenticate'}, $headers);
+      $auth = BSRPC::call_authenticator($param, $headers->{'www-authenticate'}, $headers);
       if ($auth) {
-        my %myparam = ( %{$ev->{'param'}}, 'authenticator' => undef );
+        my %myparam = ( %{$ev->{'param'}}, 'authenticator_norecurse' => 1);
 	$myparam{'headers'} = [ grep {!/^authorization:/i} @{$myparam{'headers'} || []} ];
         push @{$myparam{'headers'}}, "Authorization: $auth";
 	rpc(\%myparam);
@@ -507,7 +517,8 @@ sub rpc_adddata {
   $jev->{'replbuf'} .= $data;
   if ($jev->{'paused'}) {
     delete $jev->{'paused'};
-    BSEvents::add($jev);
+    my $conf = $jev->{'conf'};
+    BSEvents::add($jev, $conf->{'replstream_timeout'});
   }
 }
 
@@ -521,7 +532,8 @@ sub rpc_recv_forward_close_handler {
     $jev->{'replbuf'} .= "0\r\n$trailer\r\n";
     if ($jev->{'paused'}) {
       delete $jev->{'paused'};
-      BSEvents::add($jev);
+      my $conf = $jev->{'conf'};
+      BSEvents::add($jev, $conf->{'replstream_timeout'});
     }
     $jev->{'readev'} = {'eof' => 1, 'rpcuri' => $rev->{'rpcuri'}};
   }
@@ -553,6 +565,7 @@ sub rpc_recv_forward_data_handler {
     # too full! wait till there is more room
     #print "stay=".@stay.", leave=".@leave.", blocking\n";
     $rev->{'paused'} = 1;
+    BSEvents::rem($rev);
     return 0;
   }
 
@@ -594,6 +607,7 @@ sub rpc_recv_forward_data_handler {
     }
     # too full! wait till there is more room
     $rev->{'paused'} = 1;
+    BSEvents::rem($rev);
     return 0;
   }
 
@@ -667,15 +681,17 @@ sub rpc_recv_forward_setup {
      BSServerEvents::reply(undef, @args);
      BSEvents::rem($jev);
      $jev->{'streaming'} = 1;
-     delete $jev->{'timeouthandler'};
   }
-  $jev->{'handler'} = \&BSServerEvents::stream_write_handler;
   $jev->{'readev'} = $ev;
+  $jev->{'handler'} = \&BSServerEvents::stream_write_handler;
+  $jev->{'timeouthandler'} = \&BSServerEvents::replstream_timeout;
   if (length($jev->{'replbuf'})) {
     delete $jev->{'paused'};
-    BSEvents::add($jev, 0);
+    my $conf = $jev->{'conf'};
+    BSEvents::add($jev, $conf->{'replstream_timeout'} || 0);
   } else {
     $jev->{'paused'} = 1;
+    BSEvents::rem($jev);
   }
 }
 
@@ -711,7 +727,7 @@ sub rpc_recv_forward {
   $wev->{'datahandler'} = \&rpc_recv_forward_data_handler;
   $wev->{'closehandler'} = \&rpc_recv_forward_close_handler;
   $ev->{'handler'} = \&BSServerEvents::stream_read_handler;
-  BSEvents::add($ev);
+  BSEvents::add($ev) unless $ev->{'paused'};
   BSEvents::add($wev);	# do this last
 }
 
@@ -859,13 +875,8 @@ sub rpc_tossl {
 #  print "switching to https\n";
   my $sni;
   $sni = $1 if $ev->{'rpcdest'} && $ev->{'rpcdest'} =~ /^(.+):\d+$/;
-  fcntl($ev->{'fd'}, F_SETFL, 0);     # in danger honor...
   my $param = $ev->{'param'};
-  eval {
-    ($param->{'https'} || $tossl)->($ev->{'fd'}, 'mode' => 'connect', 'keyfile' => $param->{'ssl_keyfile'}, 'certfile' => $param->{'ssl_certfile'}, 'sni' => $sni);
-    BSRPC::verify_sslpeerfingerprint($ev->{'fd'}, $param->{'sslpeerfingerprint'}) if $param->{'sslpeerfingerprint'};
-  };
-  fcntl($ev->{'fd'}, F_SETFL, O_NONBLOCK);
+  eval { BSRPC::setup_ssl_client($ev->{'fd'}, { %$param, 'nonblocking' => 1, 'ssl_connect_timeout' => $rpc_connect_timeout }, $sni) };
   if ($@) {
     my $err = $@;
     $err =~ s/\n$//s;
@@ -921,9 +932,11 @@ sub rpc_recv_handler {
   $ans = $2;
   my %headers;
   BSHTTP::gethead(\%headers, $headers);
-  if ($status =~ /^401[^\d]/ && $ev->{'param'}->{'authenticator'} && $headers{'www-authenticate'}) {
-    rpc_authenticate($ev, $status, $ev->{'param'}->{'authenticator'}, \%headers);
-    return undef;
+  if ($status =~ /^401[^\d]/ && $headers{'www-authenticate'}) {
+    if (!$ev->{'param'}->{'authenticator_norecurse'} && ($BSRPC::authenticator || $ev->{'param'}->{'authenticator'})) {
+      rpc_authenticate($ev, $status, $ev->{'param'}->{'authenticator'} || $BSRPC::authenticator, \%headers);
+      return undef;
+    }
   }
   if ($status =~ /^30[27][^\d]/) {
     rpc_redirect($ev, $headers{'location'});
@@ -1149,9 +1162,9 @@ sub rpc {
     push @xhdrs, 'Content-Type: application/x-www-form-urlencoded';
     push @xhdrs, "Content-Length: ".length($data);
   }
-  if ($param->{'authenticator'} && !grep {/^authorization:/i} @xhdrs) {
+  if (($BSRPC::authenticator || $param->{'authenticator'}) && !grep {/^authorization:/i} @xhdrs) {
     # ask authenticator for cached authorization
-    my $auth = $param->{'authenticator'}->($param);
+    my $auth = BSRPC::call_authenticator($param);
     push @xhdrs, "Authorization: $auth" if $auth;
   }
   BSRPC::addautoheaders(\@xhdrs, $jev->{'autoheaders'} || []);
@@ -1160,14 +1173,14 @@ sub rpc {
   my ($proto, $host, $port, $req, $proxytunnel) = BSRPC::createreq($param, $uri, $proxy, \%cookiestore, @xhdrs);
   $req .= $data if defined $data;
   if ($proto eq 'https' || $proxytunnel) {
-    die("https not supported\n") unless $tossl || $param->{'https'};
+    die("https not supported\n") unless $BSRPC::tossl || $param->{'https'};
   }
   $param->{'proto'} = $proto;
   # should do this async, but that's hard to do in perl
   my $hostaddr = BSRPC::lookuphost($host, $port, \%hostlookupcache);
   die("unknown host '$host'\n") unless $hostaddr;
   my $fd = BSRPC::opensocket($hostaddr);
-  fcntl($fd, F_SETFL,O_NONBLOCK);
+  fcntl($fd, F_SETFL, O_NONBLOCK);
   my $ev = BSEvents::new('write', \&rpc_send_handler);
   if ($proxytunnel) {
     $ev->{'proxytunnel'} = $req;
@@ -1187,7 +1200,7 @@ sub rpc {
     if ($! == POSIX::EINPROGRESS) {
       $ev->{'handler'} = \&rpc_connect_handler;
       $ev->{'timeouthandler'} = \&rpc_connect_timeout;
-      BSEvents::add($ev, 60);	# 60s connect timeout
+      BSEvents::add($ev, $rpc_connect_timeout);
       return undef;
     }
     close $ev->{'fd'};
@@ -1231,6 +1244,7 @@ sub jobstatus {
     $j->{'starttime'} = $req->{'starttime'} if $req->{'starttime'};
     $j->{'peer'} = $req->{'headers'}->{'x-peer'} if $req->{'headers'} && $req->{'headers'}->{'x-peer'};
     $j->{'request'} = substr("$req->{'action'} $req->{'path'}?$req->{'query'}", 0, 1024) if $req->{'action'};
+    $j->{'requestid'} = $req->{'requestid'} if $req->{'requestid'};
   }
   return $j;
 }
@@ -1240,7 +1254,9 @@ sub getstatus {
   my $jev = $BSServerEvents::gev;
   $ret->{'ev'} = $jev->{'id'};
   my $req = $jev->{'request'};
-  $ret->{'starttime'} = $req->{'server'}->{'starttime'};
+  my $server = $req->{'server'};
+  $ret->{'starttime'} = $server->{'starttime'};
+  $ret->{'pid'} = $$;
   for my $filename (sort keys %filewatchers) {
     my $fw = {'filename' => $filename, 'state' => $filewatchers_s{$filename}};
     for my $jev (@{$filewatchers{$filename}}) {
@@ -1266,7 +1282,7 @@ sub getstatus {
     }
     push @{$ret->{'serialize'}}, $sz;
   }
-  for my $jev (BSServerEvents::getrequestevents($req->{'server'})) {
+  for my $jev (BSServerEvents::getrequestevents($server)) {
     push @{$ret->{'joblist'}->{'job'}}, jobstatus($jev);
   }
   return $ret;

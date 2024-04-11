@@ -1,6 +1,5 @@
 require 'webmock/rspec'
-require 'rails_helper'
-RSpec.describe Webui::PackageController, vcr: true do
+RSpec.describe Webui::PackageController, :vcr do
   let(:admin) { create(:admin_user, login: 'admin') }
   let(:user) { create(:confirmed_user, :with_home, login: 'tom') }
   let(:source_project) { user.home_project }
@@ -149,12 +148,6 @@ RSpec.describe Webui::PackageController, vcr: true do
   end
 
   describe 'GET #show' do
-    context 'require_package before_action' do
-      context 'with an invalid package' do
-        it { expect { get :show, params: { project: user.home_project, package: 'no_package' } }.to raise_error(ActiveRecord::RecordNotFound) }
-      end
-    end
-
     context 'with a valid package' do
       before do
         get :show, params: { project: user.home_project, package: source_package.name }
@@ -173,16 +166,6 @@ RSpec.describe Webui::PackageController, vcr: true do
 
       it { expect(flash[:error]).to include('Files could not be expanded:') }
       it { expect(assigns(:more_info)).to include('service daemon error:') }
-    end
-
-    context 'with a package without sourceaccess' do
-      before do
-        create(:sourceaccess_flag, project: user.home_project)
-        get :show, params: { project: user.home_project, package: source_package.name }
-      end
-
-      it { expect(flash[:error]).to eq("You don't have access to the sources of this package: \"#{source_package}\"") }
-      it { expect(response).to redirect_to(project_show_path(user.home_project)) }
     end
 
     context 'revision handling' do
@@ -215,74 +198,13 @@ RSpec.describe Webui::PackageController, vcr: true do
     end
   end
 
-  describe 'DELETE #remove_file' do
-    before do
-      login(user)
-      allow_any_instance_of(Package).to receive(:delete_file).and_return(true)
-    end
-
-    def remove_file_post
-      post :remove_file, params: { project: user.home_project, package: source_package, filename: 'the_file' }
-    end
-
-    context 'with successful backend call' do
-      before do
-        remove_file_post
-      end
-
-      it { expect(flash[:success]).to eq("File 'the_file' removed successfully") }
-      it { expect(assigns(:package)).to eq(source_package) }
-      it { expect(assigns(:project)).to eq(user.home_project) }
-      it { expect(response).to redirect_to(package_show_path(project: user.home_project, package: source_package)) }
-    end
-
-    context 'with not successful backend call' do
-      before do
-        allow_any_instance_of(Package).to receive(:delete_file).and_raise(Backend::NotFoundError)
-        remove_file_post
-      end
-
-      it { expect(flash[:error]).to eq("Failed to remove file 'the_file'") }
-    end
-
-    it 'calls delete_file method' do
-      allow_any_instance_of(Package).to receive(:delete_file).with('the_file')
-      remove_file_post
-
-      expect(flash[:success]).to eq("File 'the_file' removed successfully")
-    end
-
-    context 'with no permissions' do
-      let(:other_user) { create(:confirmed_user) }
-
-      before do
-        login other_user
-        remove_file_post
-      end
-
-      it { expect(flash[:error]).to eq('Sorry, you are not authorized to update this package.') }
-      it { expect(Package.where(name: 'my_package')).to exist }
-    end
-  end
-
   describe 'GET #revisions' do
     let(:project) { create(:project, maintainer: user, name: 'some_dev_project123') }
-    let(:package) { create(:package_with_revisions, name: 'package_with_one_revision', revision_count: 1, project: project) }
+    let(:package) { create(:package_with_revisions, name: 'package_with_one_revision', revision_count: 25, project: project) }
     let(:elided_package_name) { 'package_w...revision' }
 
     before do
       login(user)
-    end
-
-    context 'without source access' do
-      before do
-        package.add_flag('sourceaccess', 'disable')
-        package.save
-        get :revisions, params: { project: project, package: package }
-      end
-
-      it { expect(flash[:error]).to eq("You don't have access to the sources of this package: \"#{elided_package_name}\"") }
-      it { expect(response).to redirect_to(project_show_path(project: project.name)) }
     end
 
     context 'with source access' do
@@ -293,14 +215,6 @@ RSpec.describe Webui::PackageController, vcr: true do
       after do
         # Delete revisions that got created in the backend
         package.destroy
-      end
-
-      it 'sets the project' do
-        expect(assigns(:project)).to eq(project)
-      end
-
-      it 'sets the package' do
-        expect(assigns(:package)).to eq(package)
       end
 
       context 'when not passing the rev parameter' do
@@ -317,7 +231,7 @@ RSpec.describe Webui::PackageController, vcr: true do
         end
 
         it 'returns revisions with the default pagination' do
-          expect(assigns(:revisions)).to eq((6..revision_count).to_a.reverse)
+          expect(assigns(:revisions)).to match_array((6..revision_count).to_a.reverse.map { |n| include('rev' => n.to_s) })
         end
 
         context 'and passing the show_all parameter' do
@@ -326,7 +240,7 @@ RSpec.describe Webui::PackageController, vcr: true do
           end
 
           it 'returns revisions without pagination' do
-            expect(assigns(:revisions)).to eq((1..revision_count).to_a.reverse)
+            expect(assigns(:revisions)).to match_array((1..revision_count).to_a.reverse.map { |n| include('rev' => n.to_s) })
           end
         end
 
@@ -336,7 +250,7 @@ RSpec.describe Webui::PackageController, vcr: true do
           end
 
           it "returns the paginated revisions for the page parameter's value" do
-            expect(assigns(:revisions)).to eq((1..5).to_a.reverse)
+            expect(assigns(:revisions)).to match_array((1..5).to_a.reverse.map { |n| include('rev' => n.to_s) })
           end
         end
       end
@@ -349,7 +263,7 @@ RSpec.describe Webui::PackageController, vcr: true do
         let(:param_rev) { 23 }
 
         it "returns revisions up to rev parameter's value with the default pagination" do
-          expect(assigns(:revisions)).to eq((4..param_rev).to_a.reverse)
+          expect(assigns(:revisions)).to match_array((4..param_rev).to_a.reverse.map { |n| include('rev' => n.to_s) })
         end
 
         context 'and passing the show_all parameter' do
@@ -358,7 +272,7 @@ RSpec.describe Webui::PackageController, vcr: true do
           end
 
           it "returns revisions up to rev parameter's value without pagination" do
-            expect(assigns(:revisions)).to eq((1..param_rev).to_a.reverse)
+            expect(assigns(:revisions)).to match_array((1..param_rev).to_a.reverse.map { |n| include('rev' => n.to_s) })
           end
         end
 
@@ -368,7 +282,7 @@ RSpec.describe Webui::PackageController, vcr: true do
           end
 
           it "returns the paginated revisions for the page parameter's value" do
-            expect(assigns(:revisions)).to eq((1..3).to_a.reverse)
+            expect(assigns(:revisions)).to match_array((1..3).to_a.reverse.map { |n| include('rev' => n.to_s) })
           end
         end
       end
@@ -497,12 +411,6 @@ RSpec.describe Webui::PackageController, vcr: true do
       it { expect(response).to have_http_status(:bad_request) }
     end
 
-    context 'with an unexistent package' do
-      let(:post_save_meta) { post :save_meta, params: { project: source_project, package: 'blah', meta: valid_meta } }
-
-      it { expect { post_save_meta }.to raise_error(ActiveRecord::RecordNotFound) }
-    end
-
     context 'when connection with the backend fails' do
       before do
         allow_any_instance_of(Package).to receive(:update_from_xml).and_raise(Backend::Error, 'fake message')
@@ -625,228 +533,14 @@ RSpec.describe Webui::PackageController, vcr: true do
     end
   end
 
-  context 'build logs' do
-    let(:source_project_with_plus) { create(:project, name: 'foo++bar') }
-    let(:package_of_project_with_plus) { create(:package, name: 'some_package', project: source_project_with_plus) }
-    let(:source_package_with_plus) { create(:package, name: 'my_package++special', project: source_project) }
-    let(:repo_leap_42_2) { create(:repository, name: 'leap_42.2', project: source_project, architectures: ['i586']) }
-    let(:architecture) { repo_leap_42_2.architectures.first }
-
-    RSpec.shared_examples 'build log' do
-      before do
-        repo_leap_42_2
-        source_project.store(login: user)
-      end
-
-      context 'successfully' do
-        before do
-          path = "#{CONFIG['source_url']}/build/#{user.home_project}/_result?arch=i586" \
-                 "&package=#{source_package}&repository=#{repo_leap_42_2}&view=status"
-          stub_request(:get, path).and_return(body:
-            %(<resultlist state='123'>
-               <result project='#{user.home_project}' repository='#{repo_leap_42_2}' arch='i586'>
-                 <binarylist/>
-               </result>
-              </resultlist>))
-          do_request project: source_project, package: source_package, repository: repo_leap_42_2.name, arch: 'i586', format: 'js'
-        end
-
-        it { expect(response).to have_http_status(:ok) }
-      end
-
-      context "successfully with a package which name that includes '+'" do
-        before do
-          path = "#{CONFIG['source_url']}/build/#{user.home_project}/_result?arch=i586" \
-                 "&package=#{source_package_with_plus}&repository=#{repo_leap_42_2}&view=status"
-          stub_request(:get, path).and_return(body:
-            %(<resultlist state='123'>
-               <result project='#{user.home_project}' repository='#{repo_leap_42_2}' arch='i586'>
-                 <binarylist/>
-               </result>
-              </resultlist>))
-          do_request project: source_project, package: source_package_with_plus, repository: repo_leap_42_2.name, arch: 'i586', format: 'js'
-        end
-
-        it { expect(response).to have_http_status(:ok) }
-      end
-
-      context "successfully with a project which name that includes '+'" do
-        let(:repo_leap_45_1) { create(:repository, name: 'leap_45.1', project: source_project_with_plus, architectures: ['i586']) }
-
-        before do
-          repo_leap_45_1
-          source_project_with_plus.store
-
-          path = "#{CONFIG['source_url']}/build/#{source_project_with_plus}/_result?arch=i586" \
-                 "&package=#{package_of_project_with_plus}&repository=#{repo_leap_45_1}&view=status"
-          stub_request(:get, path).and_return(body:
-            %(<resultlist state='123'>
-               <result project='#{source_project_with_plus}' repository='#{repo_leap_45_1}' arch='i586'>
-                 <binarylist/>
-               </result>
-              </resultlist>))
-          do_request project: source_project_with_plus, package: package_of_project_with_plus,
-                     repository: repo_leap_45_1.name, arch: 'i586', format: 'js'
-        end
-
-        it { expect(response).to have_http_status(:ok) }
-      end
-
-      context 'with a protected package' do
-        let!(:flag) { create(:sourceaccess_flag, project: source_project) }
-
-        before do
-          do_request project: source_project, package: source_package, repository: repo_leap_42_2.name, arch: 'i586', format: 'js'
-        end
-
-        it { expect(flash[:error]).to eq('Could not access build log') }
-        it { expect(response).to redirect_to(package_show_path(project: source_project, package: source_package)) }
-      end
-
-      context 'with a non existant package' do
-        before do
-          do_request project: source_project, package: 'nonexistant', repository: repo_leap_42_2.name, arch: 'i586'
-        end
-
-        it { expect(flash[:error]).to eq("Couldn't find package 'nonexistant' in project '#{source_project}'. Are you sure it exists?") }
-        it { expect(response).to redirect_to(project_show_path(project: source_project)) }
-      end
-
-      context 'with a non existant project' do
-        before do
-          do_request project: 'home:foo', package: 'nonexistant', repository: repo_leap_42_2.name, arch: 'i586'
-        end
-
-        it { expect(flash[:error]).to eq("Couldn't find project 'home:foo'. Are you sure it still exists?") }
-        it { expect(response).to redirect_to(root_path) }
-      end
-    end
-
-    describe 'GET #package_live_build_log' do
-      def do_request(params)
-        get :live_build_log, params: params
-      end
-
-      it_behaves_like 'build log'
-
-      context 'with a nonexistant repository' do
-        before do
-          do_request project: source_project, package: source_package, repository: 'nonrepository', arch: 'i586'
-        end
-
-        it { expect(flash[:error]).not_to be_nil }
-        it { expect(response).to redirect_to(package_show_path(source_project, source_package)) }
-      end
-
-      context 'with a nonexistant architecture' do
-        before do
-          do_request project: source_project, package: source_package, repository: repo_leap_42_2.name, arch: 'i566'
-        end
-
-        it { expect(flash[:error]).not_to be_nil }
-        it { expect(response).to redirect_to(package_show_path(source_project, source_package)) }
-      end
-
-      context 'with a multibuild package' do
-        let(:params) do
-          { project: source_project,
-            package: "#{source_package}:multibuild-package",
-            repository: repo_leap_42_2.name,
-            arch: architecture.name }
-        end
-        let(:starttime) { 1.hour.ago.to_i }
-
-        before do
-          path = "#{CONFIG['source_url']}/build/#{source_project}/_result?arch=i586" \
-                 "&package=#{source_package}:multibuild-package&repository=#{repo_leap_42_2}&view=status"
-          stub_request(:get, path).and_return(body: %(<resultlist state='123'>
-               <result project='#{source_project}' repository='#{repo_leap_42_2}' arch='i586' code="unpublished" state="unpublished">
-                <status package="#{source_package}:multibuild-package" code="succeeded" />
-               </result>
-              </resultlist>))
-
-          path = "#{CONFIG['source_url']}/build/#{source_project}/#{repo_leap_42_2}/i586/_builddepinfo" \
-                 "?package=#{source_package}:multibuild-package&view=revpkgnames"
-          stub_request(:get, path).and_return(body: %(<builddepinfo>
-                <package name="#{source_package}:multibuild-package">
-                <source>apache2</source>
-                <pkgdep>apache2</pkgdep>
-                </package>
-              </builddepinfo>))
-
-          path = "#{CONFIG['source_url']}/build/#{source_project}/#{repo_leap_42_2}/i586/#{source_package}:multibuild-package/_jobstatus"
-          body = "<jobstatus workerid='42' starttime='#{starttime}'/>"
-          stub_request(:get, path).and_return(body: body)
-
-          do_request params
-        end
-
-        it { expect(assigns(:what_depends_on)).to eq(['apache2']) }
-        it { expect(assigns(:status)).to eq('succeeded') }
-        it { expect(assigns(:workerid)).to eq('42') }
-        it { expect(assigns(:buildtime)).to eq(1.hour.to_i) }
-        it { expect(assigns(:package)).to eq(source_package) }
-        it { expect(assigns(:package_name)).to eq("#{source_package}:multibuild-package") }
-      end
-    end
-
-    describe 'GET #update_build_log' do
-      def do_request(params)
-        get :update_build_log, params: params, xhr: true
-      end
-
-      it_behaves_like 'build log'
-
-      context 'with a nonexistant repository' do
-        before do
-          do_request project: source_project, package: source_package, repository: 'nonrepository', arch: 'i586'
-        end
-
-        it { expect(assigns(:errors)).not_to be_nil }
-        it { expect(response).to have_http_status(:ok) }
-      end
-
-      context 'with a nonexistant architecture' do
-        before do
-          do_request project: source_project, package: source_package, repository: repo_leap_42_2.name, arch: 'i566'
-        end
-
-        it { expect(assigns(:errors)).not_to be_nil }
-        it { expect(response).to have_http_status(:ok) }
-      end
-
-      context 'for multibuild package' do
-        let(:params) do
-          { project: source_project,
-            package: "#{source_package}:multibuild-package",
-            repository: repo_leap_42_2.name,
-            arch: architecture.name }
-        end
-
-        before do
-          path = "#{CONFIG['source_url']}/build/#{source_project}/#{repo_leap_42_2}/i586/#{source_package}:multibuild-package/_log?view=entry"
-          body = "<directory><entry name=\"_log\" size=\"#{32 * 1024}\" mtime=\"1492267770\" /></directory>"
-          stub_request(:get, path).and_return(body: body)
-          do_request params
-        end
-
-        it { expect(assigns(:log_chunk)).not_to be_nil }
-        it { expect(assigns(:package)).to eq(source_package) }
-        it { expect(assigns(:package_name)).to eq("#{source_package}:multibuild-package") }
-        it { expect(assigns(:project)).to eq(source_project) }
-        it { expect(assigns(:offset)).to eq(0) }
-      end
-    end
-  end
-
   describe 'POST #trigger_rebuild' do
     before do
       login(user)
     end
 
-    context 'when triggering a rebuild fails' do
+    context 'non existent repository' do
       before do
-        post :trigger_rebuild, params: { project: source_project, package: source_package, repository: 'non_existant_repository' }
+        post :trigger_rebuild, params: { project: source_project, package: source_package, repository: 'non_existent_repository' }
       end
 
       it 'lets the user know there was an error' do
@@ -854,8 +548,9 @@ RSpec.describe Webui::PackageController, vcr: true do
       end
 
       it 'redirects to the package binaries path' do
-        expect(response).to redirect_to(package_binaries_path(project: source_project, package: source_package,
-                                                              repository: 'non_existant_repository'))
+        expect(response).to redirect_to(project_package_repository_binaries_path(project_name: source_project,
+                                                                                 package_name: source_package,
+                                                                                 repository_name: 'non_existent_repository'))
       end
     end
 
@@ -889,7 +584,7 @@ RSpec.describe Webui::PackageController, vcr: true do
       it { expect(flash[:success]).not_to be_nil }
     end
 
-    context 'when triggering a rebuild fails' do
+    context 'user not being a maintainer of a package' do
       let(:user) { create(:confirmed_user, login: 'foo') }
       let(:other_user) { create(:confirmed_user, login: 'bar') }
       let(:project) { create(:project, name: 'foo_project') }
@@ -1010,8 +705,8 @@ RSpec.describe Webui::PackageController, vcr: true do
 
     it { expect(response).to have_http_status(:success) }
     it { expect(assigns(:repo_list)).to include(['openSUSE_Leap_42.1', 'openSUSE_Leap_42_1']) }
-    it { expect(assigns(:repo_list)).not_to include(['images', 'images']) }
-    it { expect(assigns(:repo_list)).not_to include(['openSUSE_Tumbleweed', 'openSUSE_Tumbleweed']) }
+    it { expect(assigns(:repo_list)).not_to include(%w[images images]) }
+    it { expect(assigns(:repo_list)).not_to include(%w[openSUSE_Tumbleweed openSUSE_Tumbleweed]) }
     it { expect(assigns(:repo_arch_hash)['openSUSE_Leap_42_1']).to include('x86_64') }
     it { expect(assigns(:repo_arch_hash)['openSUSE_Leap_42_1']).not_to include('armv7l') }
   end
@@ -1029,14 +724,14 @@ RSpec.describe Webui::PackageController, vcr: true do
     end
 
     describe 'when there is a rpmlint log' do
+      subject do
+        get :rpmlint_log, params: { project: source_project, package: source_package, repository: repo_for_source_project.name, architecture: 'i586' }
+      end
+
       before do
         allow(Backend::Api::BuildResults::Binaries).to receive(:rpmlint_log)
           .with(source_project.name, source_package.name, repo_for_source_project.name, 'i586')
           .and_return('test_package.i586: W: description-shorter-than-summary\ntest_package.src: W: description-shorter-than-summary')
-      end
-
-      subject do
-        get :rpmlint_log, params: { project: source_project, package: source_package, repository: repo_for_source_project.name, architecture: 'i586' }
       end
 
       it { is_expected.to have_http_status(:success) }

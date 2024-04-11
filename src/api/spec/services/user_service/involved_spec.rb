@@ -1,6 +1,6 @@
-require 'rails_helper'
+RSpec.describe UserService::Involved, :vcr do
+  subject { involved_service.involved_pkg_and_prj_paginated }
 
-RSpec.describe UserService::Involved, vcr: true do
   let(:user) { create(:confirmed_user, :with_home) }
   let(:home_project) { user.home_project }
 
@@ -28,8 +28,6 @@ RSpec.describe UserService::Involved, vcr: true do
   end
 
   let(:involved_service) { described_class.new(user: user, filters: filters, page: nil) }
-
-  subject { involved_service.involved_pkg_and_prj_paginated }
 
   before do
     User.session = user

@@ -100,19 +100,26 @@ module Event
       source_or_target_package_watchers(project_type: 'targetproject', package_type: 'targetpackage')
     end
 
+    def involves_hidden_project?
+      bs_request = BsRequest.find_by(number: payload[:number])
+      return false unless bs_request
+
+      bs_request.bs_request_actions.any?(&:involves_hidden_project?)
+    end
+
     private
 
     def source_or_target_project_watchers(project_type:)
       watchers = payload['actions'].pluck(project_type)
-                                   .map { |project_name| Project.find_by_name(project_name) }
-                                   .compact.map(&:watched_items)
+                                   .filter_map { |project_name| Project.find_by_name(project_name) }
+                                   .map(&:watched_items)
                                    .flatten.map(&:user)
       watchers.uniq
     end
 
     def source_or_target_package_watchers(project_type:, package_type:)
       payload['actions'].map { |action| [action[project_type], action[package_type]] }
-                        .map do |project_name, package_name|
+                        .filter_map do |project_name, package_name|
         next if project_name.blank? || package_name.blank?
 
         Package.get_by_project_and_name(project_name,
@@ -121,7 +128,7 @@ module Event
       rescue Package::Errors::UnknownObjectError, Project::Errors::UnknownObjectError
         nil
       end
-                        .compact.map(&:watched_items)
+                        .map(&:watched_items)
                         .flatten.map(&:user)
     end
 
@@ -152,18 +159,18 @@ module Event
                    "X-OBS-Request-Action-#{index}"
                  end
 
-        ret[suffix + '-type'] = a['type']
+        ret["#{suffix}-type"] = a['type']
         if a['targetpackage']
-          ret[suffix + '-target'] = "#{a['targetproject']}/#{a['targetpackage']}"
+          ret["#{suffix}-target"] = "#{a['targetproject']}/#{a['targetpackage']}"
         elsif a['targetrepository']
-          ret[suffix + '-target'] = "#{a['targetproject']}/#{a['targetrepository']}"
+          ret["#{suffix}-target"] = "#{a['targetproject']}/#{a['targetrepository']}"
         elsif a['targetproject']
-          ret[suffix + '-target'] = a['targetproject']
+          ret["#{suffix}-target"] = a['targetproject']
         end
         if a['sourcepackage']
-          ret[suffix + '-source'] = "#{a['sourceproject']}/#{a['sourcepackage']}"
+          ret["#{suffix}-source"] = "#{a['sourceproject']}/#{a['sourcepackage']}"
         elsif a['sourceproject']
-          ret[suffix + '-source'] = a['sourceproject']
+          ret["#{suffix}-source"] = a['sourceproject']
         end
       end
       ret

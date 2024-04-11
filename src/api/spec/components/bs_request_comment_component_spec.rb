@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe BsRequestCommentComponent, type: :component do
   let(:commentable) { create(:bs_request_with_submit_action) }
   let(:comment_a) { travel_to(1.day.ago) { create(:comment_request, commentable: commentable, body: 'Comment A') } }
@@ -9,15 +7,15 @@ RSpec.describe BsRequestCommentComponent, type: :component do
   end
 
   it 'displays a comment icon' do
-    expect(rendered_content).to have_selector('i.fa-comment', count: 1)
+    expect(rendered_content).to have_css('i.fa-comment', count: 1)
   end
 
   it 'displays an avatar' do
-    expect(rendered_content).to have_selector("img[title='#{comment_a.user.realname}']", count: 1)
+    expect(rendered_content).to have_css("img[title='#{comment_a.user.realname}']", count: 1)
   end
 
   it 'displays who wrote the comment' do
-    expect(rendered_content).to have_text("#{comment_a.user.realname} (#{comment_a.user.login})\nwrote")
+    expect(rendered_content).to have_text("#{comment_a.user.realname} (#{comment_a.user.login})\ncommented")
   end
 
   it 'displays the time when the comment happened in words' do
@@ -30,7 +28,7 @@ RSpec.describe BsRequestCommentComponent, type: :component do
 
   context 'when the user is not logged in' do
     it 'is not possible to reply a comment' do
-      expect(rendered_content).not_to have_text('Reply')
+      expect(rendered_content).to have_no_text('Reply')
     end
   end
 
@@ -45,11 +43,11 @@ RSpec.describe BsRequestCommentComponent, type: :component do
     end
 
     it 'is possible to edit the comment' do
-      expect(rendered_content).to have_selector('.dropdown-menu', text: 'Edit')
+      expect(rendered_content).to have_css('.dropdown-menu', text: 'Edit')
     end
 
     it 'is possible to remove the comment' do
-      expect(rendered_content).to have_selector('.dropdown-menu', text: 'Delete')
+      expect(rendered_content).to have_css('.dropdown-menu', text: 'Delete')
     end
   end
 
@@ -64,17 +62,17 @@ RSpec.describe BsRequestCommentComponent, type: :component do
     end
 
     it 'is not possible to edit the comment' do
-      expect(rendered_content).not_to have_selector('.dropdown-menu', text: 'Edit')
+      expect(rendered_content).to have_no_css('.dropdown-menu', text: 'Edit')
     end
 
     it 'is not possible to remove the comment' do
-      expect(rendered_content).not_to have_selector('.dropdown-menu', text: 'Delete')
+      expect(rendered_content).to have_no_css('.dropdown-menu', text: 'Delete')
     end
   end
 
   context 'when rendering a comment thread' do
-    let(:comment_b) { create(:comment_request, commentable: commentable, body: 'Comment B', parent: comment_a) }
-    let!(:comment_c) { create(:comment_request, commentable: commentable, body: 'Comment C', parent: comment_b) }
+    let!(:comment_b) { create(:comment_request, commentable: commentable, body: 'Comment B', parent: comment_a) } # level 1 => 2 nested .timeline-item-comment
+    let(:comment_c) { create(:comment_request, commentable: commentable, body: 'Comment C', parent: comment_b) }
     let(:comment_d) { create(:comment_request, commentable: commentable, body: 'Comment D', parent: comment_c) }
     let!(:comment_e) { create(:comment_request, commentable: commentable, body: 'Comment E', parent: comment_d) }
 
@@ -83,23 +81,21 @@ RSpec.describe BsRequestCommentComponent, type: :component do
     end
 
     it 'displays the parent comment' do
-      expect(rendered_content).to have_text("(#{comment_a.user.login})\nwrote")
+      expect(rendered_content).to have_text("(#{comment_a.user.login})\ncommented")
       expect(rendered_content).to have_text('Comment A')
     end
 
-    it 'displays the comments on level 2 in the 2nd level' do
-      expect(rendered_content).to have_selector('.timeline-item-comment > .timeline-item-comment', text: "(#{comment_c.user.login})\nwrote")
-      expect(rendered_content).to have_selector('.timeline-item-comment > .timeline-item-comment  > .timeline-item-comment', text: 'Comment C')
+    it 'displays the third child comment on the third children level' do
+      expect(rendered_content).to have_css("#{(['.d-flex > .timeline-item-comment'] * 4).join(' > ')} > .comment-bubble", text: "(#{comment_d.user.login})\ncommented")
+      expect(rendered_content).to have_css("#{(['.d-flex > .timeline-item-comment'] * 4).join(' > ')} > .comment-bubble", text: 'Comment D')
     end
 
-    it 'does not display the comments on level 4 in the 4th one' do
-      expect(rendered_content).not_to have_selector((['.timeline-item-comment'] * 4).join(' > '), text: "(#{comment_e.user.login})\nwrote")
-      expect(rendered_content).not_to have_selector((['.timeline-item-comment'] * 5).join(' > '), text: "(#{comment_e.user.login})\nwrote")
+    it 'does not display the fourth child comment on the fourth children level' do
+      expect(rendered_content).to have_no_css("#{(['.d-flex > .timeline-item-comment'] * 5).join(' > ')} > .comment-bubble", text: 'Comment E')
     end
 
-    it 'displays the comments on level 4 in the 3rd level' do
-      expect(rendered_content).to have_selector((['.timeline-item-comment'] * 3).join(' > '), text: "(#{comment_e.user.login})\nwrote")
-      expect(rendered_content).to have_selector((['.timeline-item-comment'] * 4).join(' > '), text: 'Comment E')
+    it 'does not display the fourth child comment on the third children level' do
+      expect(rendered_content).to have_css("#{(['.d-flex > .timeline-item-comment'] * 4).join(' > ')} > .comment-bubble", text: 'Comment E')
     end
   end
 end

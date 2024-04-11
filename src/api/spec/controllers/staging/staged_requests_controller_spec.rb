@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe Staging::StagedRequestsController do
   render_views
 
@@ -29,14 +27,13 @@ RSpec.describe Staging::StagedRequestsController do
       login(user)
       bs_request.staging_project = staging_project
       bs_request.save
-      logout
       get :index, params: { staging_workflow_project: staging_workflow.project.name, staging_project_name: staging_project.name, format: :xml }
     end
 
     it { expect(response).to have_http_status(:success) }
 
     it 'returns the staged_requests xml' do
-      expect(response.body).to have_selector('staged_requests > request', count: 1)
+      expect(response.body).to have_css('staged_requests > request', count: 1)
     end
   end
 
@@ -63,7 +60,7 @@ RSpec.describe Staging::StagedRequestsController do
       it { expect(response).to have_http_status(:not_found) }
     end
 
-    context 'with valid and invalid request number', vcr: true do
+    context 'with valid and invalid request number', :vcr do
       before do
         login user
         post :create, params: { staging_workflow_project: staging_workflow.project.name, staging_project_name: staging_project.name, format: :xml },
@@ -71,7 +68,7 @@ RSpec.describe Staging::StagedRequestsController do
       end
 
       it { expect(response).to have_http_status(:bad_request) }
-      it { expect(staging_project.packages.pluck(:name)).to match_array([target_package.name]) }
+      it { expect(staging_project.packages.pluck(:name)).to contain_exactly(target_package.name) }
     end
 
     context 'with valid staging_project but staging project is being merged' do
@@ -85,11 +82,11 @@ RSpec.describe Staging::StagedRequestsController do
       it { expect(response).to have_http_status(:failed_dependency) }
 
       it 'responds with an error' do
-        expect(response.body).to have_selector('status[code=staging_project_not_in_acceptable_state]')
+        expect(response.body).to have_css('status[code=staging_project_not_in_acceptable_state]')
       end
     end
 
-    context 'with valid staging_project', vcr: true do
+    context 'with valid staging_project', :vcr do
       before do
         login user
         post :create, params: { staging_workflow_project: staging_workflow.project.name, staging_project_name: staging_project.name, format: :xml },
@@ -97,12 +94,12 @@ RSpec.describe Staging::StagedRequestsController do
       end
 
       it { expect(response).to have_http_status(:success) }
-      it { expect(staging_project.packages.pluck(:name)).to match_array([target_package.name]) }
+      it { expect(staging_project.packages.pluck(:name)).to contain_exactly(target_package.name) }
       it { expect(staging_project.staged_requests).to include(bs_request) }
-      it { expect(response.body).to have_selector('status[code=ok]') }
+      it { expect(response.body).to have_css('status[code=ok]') }
     end
 
-    context 'with delete request', vcr: true do
+    context 'with delete request', :vcr do
       before do
         login user
         post :create, params: { staging_workflow_project: staging_workflow.project.name, staging_project_name: staging_project.name, format: :xml },
@@ -112,10 +109,10 @@ RSpec.describe Staging::StagedRequestsController do
       it { expect(response).to have_http_status(:success) }
       it { expect(staging_project.packages.pluck(:name)).not_to include(target_package.name) }
       it { expect(staging_project.staged_requests).to include(delete_request) }
-      it { expect(response.body).to have_selector('status[code=ok]') }
+      it { expect(response.body).to have_css('status[code=ok]') }
     end
 
-    context 'with an excluded request', vcr: true do
+    context 'with an excluded request', :vcr do
       subject do
         login user
         post :create, params: params, body: body
@@ -141,7 +138,7 @@ RSpec.describe Staging::StagedRequestsController do
 
         it { expect(response).to have_http_status(:bad_request) }
         it { expect(response.body).to match(/invalid_request/) }
-        it { expect(response.body).to match(/Request #{bs_request.number} currently excluded from project #{staging_workflow.project.name}. Use --remove-exclusion if you want to force this action./) } # rubocop:disable Layout/LineLength
+        it { expect(response.body).to match(/Request #{bs_request.number} currently excluded from project #{staging_workflow.project.name}. Use --remove-exclusion if you want to force this action./) }
       end
 
       context 'when providing the remove exclusion parameter' do
@@ -164,13 +161,13 @@ RSpec.describe Staging::StagedRequestsController do
         end
 
         it { expect(response).to have_http_status(:success) }
-        it { expect(staging_project.packages.pluck(:name)).to match_array([target_package.name]) }
+        it { expect(staging_project.packages.pluck(:name)).to contain_exactly(target_package.name) }
         it { expect(staging_project.staged_requests).to include(bs_request) }
-        it { expect(response.body).to have_selector('status[code=ok]') }
+        it { expect(response.body).to have_css('status[code=ok]') }
       end
     end
 
-    context 'when providing the remove exclusion parameter', vcr: true do
+    context 'when providing the remove exclusion parameter', :vcr do
       subject do
         login user
         post :create, params: params, body: body
@@ -195,7 +192,7 @@ RSpec.describe Staging::StagedRequestsController do
       end
     end
 
-    context 'when providing two request', vcr: true do
+    context 'when providing two request', :vcr do
       subject do
         login user
         post :create, params: params, body: body
@@ -247,7 +244,7 @@ RSpec.describe Staging::StagedRequestsController do
           it { expect(response).to have_http_status(:success) }
           it { expect(staging_project.staged_requests).to include(bs_request) }
           it { expect(staging_project.staged_requests).to include(another_bs_request) }
-          it { expect(response.body).to have_selector('status[code=ok]') }
+          it { expect(response.body).to have_css('status[code=ok]') }
         end
       end
 
@@ -334,7 +331,7 @@ RSpec.describe Staging::StagedRequestsController do
       end
     end
 
-    context 'with non-existent target package', vcr: true do
+    context 'with non-existent target package', :vcr do
       let(:bs_request) do
         create(:bs_request_with_submit_action,
                state: :review,
@@ -354,13 +351,13 @@ RSpec.describe Staging::StagedRequestsController do
       end
 
       it { expect(response).to have_http_status(:success) }
-      it { expect(staging_project.packages.pluck(:name)).to match_array(['new_package']) }
+      it { expect(staging_project.packages.pluck(:name)).to contain_exactly('new_package') }
       it { expect(staging_project.staged_requests).to include(bs_request) }
-      it { expect(response.body).to have_selector('status[code=ok]') }
+      it { expect(response.body).to have_css('status[code=ok]') }
     end
   end
 
-  describe 'DELETE #destroy', vcr: true do
+  describe 'DELETE #destroy', :vcr do
     let!(:package) { create(:package, name: target_package, project: staging_project) }
     let(:review_by_project) { create(:review, by_project: staging_project) }
 

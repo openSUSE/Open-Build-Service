@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe UserYearlyContribution, type: :service do
   let(:user) { create(:user_with_groups) }
   let(:date_for_comment) { Time.zone.now.to_date }
@@ -22,11 +20,11 @@ RSpec.describe UserYearlyContribution, type: :service do
   end
 
   describe '#call' do
+    subject { described_class.new(user, starting_date).call }
+
     before do
       comment_for_request
     end
-
-    subject { described_class.new(user, starting_date).call }
 
     context 'when there is no activity' do
       let(:starting_date) { 1.day.from_now }

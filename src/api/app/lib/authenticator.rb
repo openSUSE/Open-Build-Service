@@ -36,12 +36,8 @@ class Authenticator
     @user_permissions = nil
   end
 
-  def proxy_mode?
-    CONFIG['proxy_auth_mode'] == :on || CONFIG['ichain_mode'] == :on
-  end
-
   def extract_user
-    if proxy_mode?
+    if ::Configuration.proxy_auth_mode_enabled?
       extract_proxy_user
     else
       extract_auth_user
@@ -83,7 +79,7 @@ class Authenticator
     # 1. try to get it where mod_rewrite might have put it
     # 2. for Apache/mod_fastcgi with -pass-header Authorization
     # 3. regular location
-    ['X-HTTP_AUTHORIZATION', 'Authorization', 'HTTP_AUTHORIZATION'].each do |header|
+    %w[X-HTTP_AUTHORIZATION Authorization HTTP_AUTHORIZATION].each do |header|
       return request.env[header].to_s.split if request.env.key?(header)
     end
     nil

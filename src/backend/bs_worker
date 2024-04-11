@@ -742,8 +742,8 @@ if ($justbuild) {
   my $buildinfo = readxml($ARGV[0], $BSXML::buildinfo);
   if ($localkiwi) {
     # make sure this is the right job for us
-    die("not a kiwi job\n") unless $buildinfo->{'file'} =~ /\.kiwi$/;
-    die("not a kiwi product job\n") unless $buildinfo->{'imagetype'} && $buildinfo->{'imagetype'}->[0] eq 'product';
+    my $imagemode = getimagemode($buildinfo);
+    die("not a product job\n") unless $imagemode && ($imagemode eq 'kiwiproduct' || $imagemode eq 'productcompose');
   }
   $| = 1;
   dobuild($buildinfo);
@@ -891,29 +891,44 @@ if ($vm =~ /openstack/) {
 $workerinfo->{'hardware'} = $hw;
 
 sub stream_logfile {
-  my ($nostream, $start, $end) = @_;
-  open(F, "<$buildroot/.build.log") || die("$buildroot/.build.log: $!\n");
-  my @s = stat(F);
+  my ($jobid, $nostream, $start, $end) = @_;
   $start ||= 0;
   if (defined($end)) {
+    die("start cannot be negative if an end position is specified\n") if $start < 0;
     $end -= $start;
     die("end is smaller than start\n") if $end < 0;
   }
+
+  open(F, '<', "$buildroot/.build.log") || die("$buildroot/.build.log: $!\n");
+  my @s = stat(F);
   die("Logfile is not that big\n") if $s[7] < abs($start);
-  defined(sysseek(F, $start, $start < 0 ? Fcntl::SEEK_END : Fcntl::SEEK_SET)) || die("sysseek: $!\n");
+  my $pos = sysseek(F, $start, $start < 0 ? Fcntl::SEEK_END : Fcntl::SEEK_SET);
+  die("sysseek: $!\n") unless defined $pos;
 
   BSServer::reply(undef, 'Content-Type: text/plain', 'Transfer-Encoding: chunked');
-  my $pos = sysseek(F, 0, Fcntl::SEEK_CUR) || die("sysseek: $!\n");
-  while(!defined($end) || $end) {
+  while (!defined($end) || $end) {
     @s = stat(F);
+    last unless @s;
     if ($s[7] <= $pos) {
-      last if !$s[3];
+      if (!$s[3]) {
+	# logfile was deleted or replaced
+	if ($pos == 0) {
+          select(undef, undef, undef, .5);
+	  if (-e "$buildroot/.build.log") {
+	    close(F);
+	    open(F, '<', "$buildroot/.build.log") || die("$buildroot/.build.log: $!\n");
+	    eval { $jobid && getstate($jobid, 1) };
+	    next unless $@;
+	  }
+	}
+        last;
+      }
       select(undef, undef, undef, .5);
       next;
     }
-    my $data = '';
     my $l = $s[7] - $pos;
     $l = 4096 if $l > 4096;
+    my $data = '';
     sysread(F, $data, $l);
     next unless length($data);
     $data = substr($data, 0, $end) if defined($end) && length($data) > $end;
@@ -1210,6 +1225,8 @@ sub getpubkey {
   my ($buildinfo, $dir, $signtype) = @_;
   my $server = $buildinfo->{'srcserver'} || $srcserver;
   my @args = ("project=$buildinfo->{'project'}", "withpubkey=1");
+  push @args, "signtype=$signtype" if $signtype;
+  push @args, "signflavor=$buildinfo->{'signflavor'}" if $buildinfo->{'signflavor'};
   my $signkey;
   my $pubkey;
   eval {
@@ -1230,6 +1247,7 @@ sub getsslcert {
   my $cert;
   my @args = ("project=$buildinfo->{'project'}", "autoextend=1");
   push @args, "signtype=$signtype" if $signtype;
+  push @args, "signflavor=$buildinfo->{'signflavor'}" if $buildinfo->{'signflavor'};
   eval {
     $cert = BSRPC::rpc({
       'uri' => "$server/getsslcert",
@@ -1581,12 +1599,14 @@ sub getbinaries_cache {
 	my $n = $1;
 	my @s = stat("$dir/$r->{'name'}");
 	die unless @s;
-        my $id = Build::queryhdrmd5("$dir/$r->{'name'}");
-	$r->{'hdrmd5'} = $id;
-	my ($cacheid) = get_cachefile("$projid/$repoid/$arch", $id);
-	push @cachenew, [$cacheid, $s[7], "$dir/$r->{'name'}"];
+	my $id = Build::queryhdrmd5("$dir/$r->{'name'}");
+	if ($id) {
+	  $r->{'hdrmd5'} = $id;
+	  my ($cacheid) = get_cachefile("$projid/$repoid/$arch", $id);
+	  push @cachenew, [$cacheid, $s[7], "$dir/$r->{'name'}"];
+	}
 	my $bv = $bv{substr($n, length($binprefix))};
-	if ($bv && $bv->{'evr'} && $bv->{'hdrmd5'} eq $id) {
+	if ($id && $bv && $bv->{'evr'} && $bv->{'hdrmd5'} eq $id) {
 	  $r->{'evr'} = $bv->{'evr'};
 	  $r->{'arch'} = $bv->{'arch'};
 	} else {
@@ -1645,9 +1665,9 @@ sub sendbadpackagebinaryversionlist {
 }
 
 # this specialized version of getbinaries only works for
-# kiwi product builds
+# product builds, either done via kiwi or product composer
 # TODO: add provenance materials
-sub getbinaries_kiwiproduct {
+sub getbinaries_product {
   my ($buildinfo, $dir, $srcdir, $kiwiorigins) = @_;
 
   mkdir_p($dir);
@@ -1666,7 +1686,7 @@ sub getbinaries_kiwiproduct {
     my $got = getbinaries_cache($dir, $server, $repo->{'project'}, $repo->{'repository'}, $repoarch, 1, \@kdeps, $modules);
     @kdeps = grep {!$got->{$_}} @kdeps;
   }
-  die("getbinaries_kiwiproduct: missing packages: @kdeps\n") if @kdeps;
+  die("404: getbinaries_product: missing packages: @kdeps\n") if @kdeps;
 
   # all done for followup builds
   return () if $buildinfo->{'followupfile'};
@@ -1729,6 +1749,8 @@ sub getbinaries_kiwiproduct {
 	return '_slsa_provenance';
       } elsif ($name =~ /appdata\.xml$/) {
 	return 'appdata'; 
+      } elsif ($name eq 'updateinfo.xml') {
+	return 'updateinfo';
       }
       return undef;
     };
@@ -2033,6 +2055,18 @@ sub getbinaries_kiwiproduct {
 	}
       }
 
+      # rename updateinfo.xml file
+      if ($done{'updateinfo/updateinfo.xml'}) {
+	rename("$ddir/updateinfo/updateinfo.xml", "$ddir/updateinfo/$packid.$arch.updateinfo.xml") || die("rename $ddir/updateinfo/updateinfo.xml $ddir/updateinfo/$packid.$arch.updateinfo.xml: $!\n");
+	$kiwiorigins->{"obs://$prp/updateinfo/$packid.$arch.updateinfo.xml"} = $prpap;
+	delete $kiwiorigins->{"obs://$prp/updateinfo/updateinfo.xml"};
+	my $cn = delete $cachenew{"$ddir/updateinfo/updateinfo.xml"};
+	if ($cn) {
+	  $cn->[2] = "$ddir/updateinfo/$packid.$arch.updateinfo.xml";
+	  $cachenew{"$ddir/updateinfo/$packid.$arch.updateinfo.xml"} = $cn;
+	}
+      }
+
       # spread _slsa_provenance.json to individual rpms
       if ($done{'_slsa_provenance/_slsa_provenance.json'}) {
 	for my $rpm (sort keys %done) {
@@ -2217,6 +2251,7 @@ sub getpreinstallimage {
     $nometa = 1 if $buildinfo->{'crossarch'};	# preinstallimage is always native
     my $callers_time = time();
     my @args;
+    push @args, "workerid=$workerid" if defined $workerid;
     push @args, "project=$repo->{'project'}";
     push @args, "repository=$repo->{'repository'}";
     push @args, "arch=$arch";
@@ -2460,6 +2495,7 @@ sub getbinaries_buildenv {
       my $server = $repo->{'server'} || $buildinfo->{'reposerver'};
       my $callers_time = time();
       my @args;
+      push @args, "workerid=$workerid" if defined $workerid;
       push @args, "project=$repo->{'project'}";
       push @args, "repository=$repo->{'repository'}";
       push @args, "arch=$arch";
@@ -2488,7 +2524,7 @@ sub getbinaries_buildenv {
   }
   # ok, all info is collected
   my @missing = grep {!@{$needed{"$_->{'name'}.$_->{'hdrmd5'}"}}} @bdeps;
-  die("missing packages: ".join(', ', map {+"$_->{'name'}\@$_->{'hdrmd5'}"} @missing)."\n") if @missing;
+  die("404 missing packages: ".join(', ', map {+"$_->{'name'}\@$_->{'hdrmd5'}"} @missing)."\n") if @missing;
 
   my @cacheold;
   my @cachenew;
@@ -2595,16 +2631,17 @@ sub getbinaries_buildenv {
   return ();	# no meta
 }
 
-sub getkiwimode {
+sub getimagemode {
   my ($buildinfo) = @_;
   my $file = $buildinfo->{'file'};
   $file =~ s/^_service:.*://;
-  my $kiwimode;
-  $kiwimode = 'image' if $file =~ /\.kiwi$/;
-  $kiwimode = 'product' if $kiwimode && $buildinfo->{'imagetype'} && $buildinfo->{'imagetype'}->[0] eq 'product';
-  $kiwimode = 'docker' if $file eq 'Dockerfile';
-  $kiwimode = 'fissile' if $file eq 'fissile.yml';
-  return $kiwimode;
+  my $imagemode;
+  $imagemode = 'kiwiimage' if $file =~ /\.kiwi$/;
+  $imagemode = 'kiwiproduct' if $imagemode && $buildinfo->{'imagetype'} && $buildinfo->{'imagetype'}->[0] eq 'product';
+  $imagemode = 'docker' if $file =~ /^Dockerfile(?:\.|$)/;
+  $imagemode = 'fissile' if $file eq 'fissile.yml';
+  $imagemode = 'productcompose' if $file =~ /\.productcompose$/;
+  return $imagemode;
 }
 
 sub getbinaries_containers {
@@ -2639,11 +2676,11 @@ sub getbinaries_containers {
     }, undef, @args, "binaries=$bdep->{'name'}");
     die("Error\n") unless ref($res);
     $res = [ grep {$_->{'name'} ne '.errors'} @$res ];
-    die("getbinaries: missing packages: $bdep->{'name'}\n") unless @$res == 1;
+    die("404 getbinaries: missing packages: $bdep->{'name'}\n") unless @$res == 1;
     my $tarname = $res->[0]->{'name'};
     add_slsa_materials_binary($buildinfo, "$repo->{'project'}/$repo->{'repository'}/$buildinfo->{'arch'}", $tarname, "$ddir/$tarname", 'containers') if $buildinfo->{'slsaprovenance'};
-    my $kiwimode = getkiwimode($buildinfo);
-    if ($kiwimode eq 'image' && $tarname =~ /\.tar$/) {
+    my $imagemode = getimagemode($buildinfo);
+    if ($imagemode eq 'kiwiimage' && $tarname =~ /\.tar$/) {
       system('gzip', '-f', '-1', "$ddir/$tarname") && die("kiwi container compression: $?\n");
       $tarname .= '.gz';
       die("kiwi container compression did not work\n") unless -f "$ddir/$tarname";
@@ -2677,7 +2714,8 @@ sub getbinaries_containers {
 }
 
 # TODO: add provenance materials
-sub getbinaries_kiwiimage {
+# Use for kiwi appliances, docker or fissile builds
+sub getbinaries_image {
   my ($buildinfo, $dir, $srcdir, $origins) = @_;
 
   mkdir_p($dir);
@@ -2711,7 +2749,7 @@ sub getbinaries_kiwiimage {
       }
       @todo = grep {!$got->{$_}} @todo;
     }
-    die("getbinaries: missing packages: @todo\n") if @todo;
+    die("404 getbinaries: missing packages: @todo\n") if @todo;
     @todo = grep {$bdep_noinstall{$_} || !$bdep_notmeta{$_}} @bdep;
   }
 
@@ -2760,7 +2798,7 @@ sub getbinaries_kiwiimage {
     }
     @todo = grep {!$got->{$_}} @todo;
   }
-  die("getbinaries: missing packages: @todo\n") if @todo;
+  die("404 getbinaries: missing packages: @todo\n") if @todo;
 
   # fetch the base containers
   push @meta, getbinaries_containers($buildinfo, $dir, $srcdir, $origins);
@@ -2775,8 +2813,8 @@ sub getbinaries {
 
   return getbinaries_buildenv($buildinfo, $dir, $srcdir) if $buildinfo->{'hasbuildenv'};
 
-  my $kiwimode = getkiwimode($buildinfo);
-  return getbinaries_kiwiimage($buildinfo, $dir, $srcdir, $origins) if $kiwimode;
+  my $imagemode = getimagemode($buildinfo);
+  return getbinaries_image($buildinfo, $dir, $srcdir, $origins) if $imagemode;
 
   mkdir_p($dir);
 
@@ -2820,8 +2858,8 @@ sub getbinaries {
 	  my $obdep = { 'name' => $_, 'hdrmd5' => $bv->{'hdrmd5'}, 'project' => $imageorigins->{$_}->[0], 'repository' => $imageorigins->{$_}->[1] };
 	  if ($bv->{'evr'}) {
 	    $obdep->{'version'} = $bv->{'evr'};
-	    $obdep->{'epoch'} = $1 if $bv->{'version'} =~ s/^([0-9]+)://;
-	    $obdep->{'release'} = $1 if $bv->{'version'} =~ s/-([^\-]+)$//;
+	    $obdep->{'epoch'} = $1 if $obdep->{'version'} =~ s/^([0-9]+)://;
+	    $obdep->{'release'} = $1 if $obdep->{'version'} =~ s/-([^\-]+)$//;
 	    $obdep->{'arch'} = $bv->{'arch'} if $bv->{'arch'};
 	  }
 	  push @$outbdep, $obdep;
@@ -2872,7 +2910,7 @@ sub getbinaries {
     }
     @todo = grep {!$done{"$binaryprefix$_"}} @todo;
   }
-  die("getbinaries: missing packages: @todo\n") if @todo;
+  die("404 getbinaries: missing packages: @todo\n") if @todo;
 
   # now get the native packages in cross mode
   @todo = map {$_->{'name'}} grep {!$_->{'sysroot'}} @bdep if $cross;
@@ -2905,7 +2943,7 @@ sub getbinaries {
     }
     @todo = grep {!$done{$_}} @todo;
   }
-  die("getbinaries: missing native packages: @todo\n") if @todo;
+  die("404 getbinaries: missing native packages: @todo\n") if @todo;
 
   # everything is downloaded, now generate meta data
   my @meta;
@@ -3314,6 +3352,41 @@ sub createchannel {
   writestr("$dir/._channel", "$dir/_channel", $c);
 }
 
+# add origin information to the report
+sub annotatereport {
+  my ($buildinfo, $dir, $kiwiorigins) = @_;
+  my @reports = grep {/\.report$/} ls($dir);
+  for my $reportfile (@reports) {
+    my $report = readxml("$dir/$reportfile", $BSXML::report, 1);
+    next unless $report;
+    addreportdata($report, $buildinfo);
+    for my $bin (@{$report->{'binary'} || []}) {
+      # update entries
+      my $prpap = $kiwiorigins->{$bin->{'_content'}};
+      $prpap ||= 'UNKNOWN/UNKNOWN/UNKNOWN/UNKNOWN';
+      my ($projid, $repoid, $arch, $packid) = split('/', $prpap, 4);
+      $bin->{'project'} = $projid;
+      $bin->{'repository'} = $repoid;
+      $bin->{'arch'} = $arch;
+      $bin->{'package'} = $packid;
+    }
+    writexml("$dir/.$reportfile", "$dir/$reportfile", $report, $BSXML::report);
+  }
+}
+
+sub addcontainerinfodata {
+  my ($report, $containerinfofile) = @_;
+  return unless -s $containerinfofile && (-s _) < 1000000;
+  my $cf;
+  if (open($cf, '<', $containerinfofile)) {
+    while (<$cf>) {
+      $report->{'version'} = $1 if /^\s*\"version\"\s*:\s*\"(.*)\"/;
+      $report->{'release'} = $1 if /^\s*\"release\"\s*:\s*\"(.*)\"/;
+    }
+    close $cf;
+  }
+}
+
 # create a .report file from a .packages file by adding binary origin information
 sub createreport {
   my ($buildinfo, $dir, $kiwiorigins, $srcdir) = @_;
@@ -3413,6 +3486,10 @@ sub createreport {
     push @bins, @{$kiwiorigins->{':basecontainers'} || []};
     my $report = { 'binary' => \@bins };
     addreportdata($report, $buildinfo);
+    my $containerinfofile = $file;
+    $containerinfofile =~ s/\.packages$/\.containerinfo/;
+    $containerinfofile =~ s/\.containerinfo$/\.docker\.containerinfo/ unless -e "$dir/$containerinfofile";
+    addcontainerinfodata($report, "$dir/$containerinfofile") if -s "$dir/$containerinfofile";
     my $reportfile = $file;
     $reportfile =~ s/\.packages$/\.report/;
     writexml("$dir/.$reportfile", "$dir/$reportfile", $report, $BSXML::report);
@@ -3421,15 +3498,11 @@ sub createreport {
 
 sub normalize_container {
   my ($container, $recompress, $tmpdir) = @_;
-  local *TAR;
-  open(TAR, '<', $container) || die("$container: $!\n");
-  my ($tar, $mtime, undef, undef, $layercomp) = BSContar::normalize_container(\*TAR, $recompress, undef, $tmpdir);
+  my ($tar, $mtime, undef, undef, $layercomp) = BSContar::normalize_container($container, $recompress, undef, $tmpdir);
   if (grep {$_ && $_ ne 'gzip'} @{$layercomp || []}) {
-    close(TAR);
     die("non-gzip layer compression, not normalizing container\n");
   }
   BSTar::writetarfile("$container.new", undef, $tar, 'mtime' => $mtime);
-  close(TAR);
   if (-f "$container.sha256") {
     open(NEWTAR, '<', "$container.new") || die("$container.new: $!\n");
     my $ctx = Digest::SHA->new(256);
@@ -3590,7 +3663,7 @@ sub dobuild {
   my $repoid = $buildinfo->{'repository'};
   my $arch = $buildinfo->{'arch'};
   my $helperarch = $buildinfo->{'hostarch'} || $arch;
-  my $kiwimode = getkiwimode($buildinfo);
+  my $imagemode = getimagemode($buildinfo);
   my $kiwiorigins;
   my $stats = {};
   my $deltamode = $buildinfo->{'file'} eq '_delta' ? 1 : undef;
@@ -3627,7 +3700,7 @@ sub dobuild {
   rm_rf($oldpkgdir) if -d $oldpkgdir;
 
   # create buildenv data
-  if (!$kiwimode && !$followupmode && !$deltamode && !$ptfmode) {
+  if (!$imagemode && !$followupmode && !$deltamode && !$ptfmode) {
     $buildinfo->{'outbuildinfo'} = {
       'project' => $projid,
       'package' => $packid,
@@ -3675,8 +3748,8 @@ sub dobuild {
     readbuildenv($buildinfo, $srcdir);
     unlink("$srcdir/_buildenv.$buildinfo->{'repository'}.$buildinfo->{'arch'}");
     print "packages, ";
-    if (($kiwimode || '') eq 'product') {
-      getbinaries_kiwiproduct($buildinfo, $pkgdir, $srcdir, {});
+    if ($imagemode && ($imagemode eq 'kiwiproduct' || $imagemode eq 'productcompose')) {
+      getbinaries_product($buildinfo, $pkgdir, $srcdir, {});
       $followupcopy->{$_} = readstr("$srcdir/$_") for grep {$_ eq '_channel' || /\.report$/} ls($srcdir);
     } else {
       getbinaries($buildinfo, $pkgdir, $srcdir, $preinstallimagedata);
@@ -3685,16 +3758,16 @@ sub dobuild {
     $buildinfo->{'rootforbuild'} = 1 if $buildinfo->{'file'} =~ /\.kiwi$/;
     $buildinfo->{'file'} = $followupmode;
     # recalc kiwimode as we changed the file
-    $kiwimode = getkiwimode($buildinfo);
+    $imagemode = getimagemode($buildinfo);
     @meta = split("\n", readstr("$srcdir/meta"));
   } else {
-    $kiwiorigins = {} if $kiwimode;	# always for kiwi
+    $kiwiorigins = {} if $imagemode;	# always for image builds
     my $needpubkey;
     my $needsslcert;
     my $needappxsslcert;
     push @meta, getsources($buildinfo, $srcdir);
     importbuild() unless defined &Build::queryhdrmd5;
-    if (!$kiwimode && -s "$srcdir/$buildinfo->{'file'}") {
+    if (!$imagemode && -s "$srcdir/$buildinfo->{'file'}") {
       # check for build markers
       local *F;
       if (open(F, '<', "$srcdir/$buildinfo->{'file'}")) {
@@ -3720,12 +3793,14 @@ sub dobuild {
     getpubkey($buildinfo, $srcdir) if $needpubkey;
     readbuildenv($buildinfo, $srcdir);
     print "packages, ";
-    if (($kiwimode || '') eq 'product') {
+    if (($imagemode || '') eq 'kiwiproduct') {
       my $kiwi = readxml("$srcdir/$buildinfo->{'file'}", $BSKiwiXML::kiwidesc, 1);
       for my $productvar (@{$kiwi->{'instsource'}->{'productoptions'}->{'productvar'} || []}) {
         $buildinfo->{'rpmhdrs_only'} = 1 if $productvar->{'name'} eq 'RPMHDRS_ONLY' and $productvar->{'_content'} eq 'true';
       }
-      push @meta, getbinaries_kiwiproduct($buildinfo, $pkgdir, $srcdir, $kiwiorigins);
+      push @meta, getbinaries_product($buildinfo, $pkgdir, $srcdir, $kiwiorigins);
+    } elsif (($imagemode || '') eq 'productcompose') {
+      push @meta, getbinaries_product($buildinfo, $pkgdir, $srcdir, $kiwiorigins);
     } else {
       push @meta, getbinaries($buildinfo, $pkgdir, $srcdir, $preinstallimagedata, $kiwiorigins);
     }
@@ -3736,7 +3811,7 @@ sub dobuild {
   writestr("$buildroot/.build.meta", undef, join("\n", @meta)."\n");
 
   my @configpath;
-  if ($kiwimode) {
+  if ($imagemode) {
     @configpath = map {"path=$_->{'project'}/$_->{'repository'}"} @{$buildinfo->{'syspath'} || $buildinfo->{'path'} || []};
     unshift @configpath, "path=$projid/$repoid" unless @configpath && $configpath[0] eq "path=$projid/$repoid";
   }
@@ -3761,7 +3836,7 @@ sub dobuild {
     getmodulemddata($buildinfo, $srcdir, $bconf);
   }
 
-  if ($oldpkgdir && !$kiwimode && $buildinfo->{'file'} ne 'preinstallimage') {
+  if ($oldpkgdir && !$imagemode && $buildinfo->{'file'} ne 'preinstallimage') {
     getoldpackages($buildinfo, $oldpkgdir, $useccache);
     getlinkedccache($buildinfo, $oldpkgdir) if $useccache && ! -f "$oldpkgdir/_ccache.tar";
   }
@@ -3809,7 +3884,7 @@ sub dobuild {
   my $imagebins = $preinstallimagedata->{'imagebins'} || {};
   for my $bdep (@bdep) {
     next if $bdep->{'package'} || (($bdep->{'repoarch'} || '') eq 'src');
-    next if $kiwimode && $bdep->{'noinstall'};
+    next if $imagemode && $bdep->{'noinstall'};
     my $bin = $bdep->{'name'};
     if ($bdep->{'sysroot'}) {
       $bin = "__sysroot__$bin";
@@ -3834,7 +3909,7 @@ sub dobuild {
   push @rpmlist, "preinstall: ".join(' ', map {$_->{'name'}} grep {$_->{'preinstall'}} @bdep);
   push @rpmlist, "vminstall: ".join(' ', map {$_->{'name'}} grep {$_->{'vminstall'}} @bdep);
   push @rpmlist, "runscripts: ".join(' ', map {$_->{'name'}} grep {$_->{'runscripts'}} @bdep);
-  if (!$kiwimode) {
+  if (!$imagemode) {
     push @rpmlist, "noinstall: ".join(' ', map {$_->{'name'}} grep {$_->{'noinstall'}} @bdep);
     push @rpmlist, "installonly: ".join(' ', map {$_->{'name'}} grep {$_->{'installonly'}} @bdep);
   }
@@ -3843,7 +3918,7 @@ sub dobuild {
   print "building...\n";
 
   die("$buildinfo->{'error'}\n") if $buildinfo->{'error'};
-  if (($kiwimode || '') eq 'product') {
+  if (($imagemode || '') eq 'kiwiproduct') {
     patchproductkiwi($buildinfo, "$srcdir/$buildinfo->{'file'}", \@meta);
   }
 
@@ -3916,7 +3991,7 @@ sub dobuild {
   push @args, '--reason', "Building $packid for project '$projid' repository '$repoid' arch '$arch' srcmd5 '$buildinfo->{'srcmd5'}'";
   push @args, '--disturl', $disturl;
   push @args, '--linksources' if $localkiwi;
-  push @args, '--signdummy' if ($kiwimode || '') eq 'product' && -e "$statedir/build/signdummy";
+  push @args, '--signdummy' if $imagemode && ($imagemode eq 'kiwiproduct' || $imagemode eq 'productcompose') && -e "$statedir/build/signdummy";
   push @args, '--vcs', $buildinfo->{'vcs'} if $buildinfo->{'vcs'} && $bconf->{'buildflags:setvcs'};
   if ($packid =~ /(?<!^_product)(?<!^_patchinfo):./) {
     $packid =~ /^(.*):(.*?)$/;
@@ -3927,7 +4002,7 @@ sub dobuild {
     push @args, "--obspackage=$packid" if $needobspackage;
   }
   push @args, "$srcdir/$buildinfo->{'file'}";
-  if (($kiwimode || '') eq 'image') {
+  if (($imagemode || '') eq 'kiwiimage') {
     # expand obsrepositories:/ directive for appliances
     my $kiwi = Build::parse(undef, "$srcdir/$buildinfo->{'file'}") || {};
     if (grep {$_->{'project'} eq '_obsrepositories'} @{$kiwi->{'path'} || []}) {
@@ -3946,7 +4021,7 @@ sub dobuild {
       push @args, '--kiwi-parameter', "--set-container-derived-from=$containerurl";
     }
   }
-  if ($kiwimode && $kiwimode ne 'product') {
+  if ($imagemode && $imagemode ne 'kiwiproduct' && $imagemode ne 'productcompose') {
     # touch pkgsummaries marker so we get summaries in the report files
     mkdir_p("$srcdir/repos");
     BSUtil::touch("$srcdir/repos/.pkgsummaries");
@@ -4001,10 +4076,6 @@ sub dobuild {
       print "final rename failed: $!\n";
       return 1;
     }
-    # XXX: extracted cpio is flat but code below expects those directories...
-    symlink('.', "$buildroot/.build.packages/SRPMS");
-    symlink('.', "$buildroot/.build.packages/DEBS");
-    symlink('.', "$buildroot/.build.packages/KIWI");
     # convert build statistics into xml
     my $statsfile = "$buildroot/.build.packages/OTHER/_statistics";
     updatestatsfromfile($stats, $statsfile) if -e $statsfile;
@@ -4019,16 +4090,18 @@ sub dobuild {
 
   if (!$followupmode && $kiwiorigins) {
     $buildinfo->{'buildtime'} = time();
-    if (!$kiwimode) {
+    if (!$imagemode) {
       # some builds like python-venv also write a .packages file
       createreport($buildinfo, "$buildroot/.build.packages/OTHER", $kiwiorigins, $srcdir);
-    } elsif ($kiwimode eq 'docker') {
+    } elsif ($imagemode eq 'docker') {
       createreport($buildinfo, "$buildroot/.build.packages/DOCKER", $kiwiorigins, $srcdir);
-    } elsif ($kiwimode ne 'product') {
-      createreport($buildinfo, "$buildroot/.build.packages/KIWI", $kiwiorigins, $srcdir);
-    } else {
+    } elsif ($imagemode eq 'kiwiproduct') {
       # as a special service we also create a channel file from the report files
       createchannel($buildinfo, "$buildroot/.build.packages/OTHER", $kiwiorigins, $srcdir);
+    } elsif ($imagemode eq 'productcompose') {
+      annotatereport($buildinfo, "$buildroot/.build.packages/PRODUCT", $kiwiorigins);
+    } else {
+      createreport($buildinfo, "$buildroot/.build.packages/KIWI", $kiwiorigins, $srcdir);
     }
   }
 
@@ -4182,6 +4255,13 @@ sub getkiwitreefiles {
   die("kiwitreefile does not work in rpmhdrs_only mode\n") if -e "$kiwitreefile.rpmhdrs_only";
   my @send;
   my %ok;
+  my $kiwidir;
+  if (-d "$buildroot/.build.packages/KIWI") {
+    $kiwidir = "$buildroot/.build.packages/KIWI";
+  } elsif (-d "$buildroot/.build.packages/PRODUCT") {
+    $kiwidir = "$buildroot/.build.packages/PRODUCT";
+  }
+  die("could not determine product build directory\n") unless $kiwidir;
   for my $f (@{$cgi->{'file'} || []}) {
     die("bad file $f\n") if "/$f/" =~ m!//!s;           # no dup slashes
     die("bad file $f\n") if "/$f/" =~ m!/\.\.?/!s;      # no . or ..
@@ -4191,13 +4271,13 @@ sub getkiwitreefiles {
     $f = '';
     for (@f) {
       $f .= $_;
-      die("bad file $f\n") if !$ok{$f} && (-l "$buildroot/.build.packages/KIWI/$f" || ! -d _);
+      die("bad file $f\n") if !$ok{$f} && (-l "$kiwidir/$f" || ! -d _);
       $ok{$f} = 1;
       $f .= '/';
     }
     $f .= $c;
-    die("bad file $f\n") if -l "$buildroot/.build.packages/KIWI/$f" || ! -f _;
-    push @send, { 'name' => $f, 'filename' => "$buildroot/.build.packages/KIWI/$f" };
+    die("bad file $f\n") if -l "$kiwidir/$f" || ! -f _;
+    push @send, { 'name' => $f, 'filename' => "$kiwidir/$f" };
   }
   BSServer::reply_cpio(\@send);
   return undef;
@@ -4234,7 +4314,7 @@ sub getlogfile {
     my $dir = { 'entry' => [ {'name' => '_log', 'size' => $s[7], 'mtime' => $s[9]} ] };
     return ($dir, $BSXML::dir);
   }
-  stream_logfile($cgi->{'nostream'}, $cgi->{'start'}, $cgi->{'end'});
+  stream_logfile($jobid, $cgi->{'nostream'}, $cgi->{'start'}, $cgi->{'end'});
   return undef;
 }
 
@@ -4318,9 +4398,9 @@ sub startbuild {
   }
   if ($localkiwi) {
     # make sure this is the right job for us
+    my $imagemode = getimagemode($buildinfo);
     my $jobname = ($buildinfo->{'arch'} || '<unknown>') . '/' . ($buildinfo->{'job'} || '<unknown>');
-    die("bad job: $jobname: not a kiwi job\n") unless $buildinfo->{'file'} =~ /\.kiwi$/;
-    die("bad job: $jobname: not a kiwi product job\n") unless $buildinfo->{'imagetype'} && $buildinfo->{'imagetype'}->[0] eq 'product';
+    die("bad job: $jobname: not a product job\n") unless $imagemode && ($imagemode eq 'kiwiproduct' || $imagemode eq 'productcompose');
   }
 
   $buildcode = codemd5('build');
@@ -4721,14 +4801,15 @@ if ($ex == 0) {
   }
   @d = ('ARCHPKGS') if $buildinfo->{'file'} =~ /PKGBUILD$/;
   @d = ('KIWI') if $buildinfo->{'file'} =~ /\.kiwi$/;
-  @d = ('DOCKER') if $buildinfo->{'file'} =~ /Dockerfile$/;
+  @d = ('PRODUCT') if $buildinfo->{'file'} =~ /\.productcompose$/;
+  @d = ('DOCKER') if $buildinfo->{'file'} =~ /Dockerfile(?:\.|$)/;
   @d = ('FISSILE') if $buildinfo->{'file'} =~ /fissile\.yml$/;
   @d = ('HELM') if $buildinfo->{'file'} =~ /Chart\.yaml$/;
   push @d, 'OTHER';
   for my $d ('.', @d) {
     my @files = sort(ls("$buildroot/.build.packages/$d"));
     @files = grep {$_ ne 'same_result_marker' && $_ ne '.kiwitree'} @files;
-    if ($d eq 'KIWI') {
+    if ($d eq 'KIWI' || $d eq 'PRODUCT') {
       $kiwitree = [ grep {-d "$buildroot/.build.packages/$d/$_"} @files ];
       undef $kiwitree unless @$kiwitree;
       undef $kiwitree if defined($BSConfig::nokiwitree) && $BSConfig::nokiwitree;
@@ -4764,7 +4845,9 @@ if ($ex == 0) {
     my $kiwitreefile = "$buildroot/.build.packages/.kiwitree";
     eval {
       die(".kiwitree already exists\n") if -e $kiwitreefile;
-      buildkiwitree($kiwitreefile, map { ("$buildroot/.build.packages/KIWI/$_", "$_/") } @$kiwitree);
+      my $kiwidir = "$buildroot/.build.packages/KIWI";
+      $kiwidir = "$buildroot/.build.packages/PRODUCT" if $buildinfo->{'file'} =~ /\.productcompose$/;
+      buildkiwitree($kiwitreefile, map { ("$kiwidir/$_", "$_/") } @$kiwitree);
       BSUtil::touch("$kiwitreefile.rpmhdrs_only") if $buildinfo->{'rpmhdrs_only'};
       push @send, { name => '.kiwitree', filename => $kiwitreefile };
     };

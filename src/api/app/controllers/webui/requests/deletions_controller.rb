@@ -2,8 +2,8 @@ module Webui
   module Requests
     class DeletionsController < Webui::RequestController
       before_action :require_login
-      before_action :set_package
       before_action :set_project
+      before_action :set_package
 
       after_action :verify_authorized
 
@@ -16,7 +16,7 @@ module Webui
       private
 
       def bs_request_params
-        params.require(:bs_request).permit(:description, bs_request_actions_attributes: [:target_project, :target_package, :type])
+        params.require(:bs_request).permit(:description, bs_request_actions_attributes: %i[target_project target_package type])
       end
     end
   end

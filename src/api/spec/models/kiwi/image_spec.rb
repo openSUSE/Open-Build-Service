@@ -1,11 +1,6 @@
-require 'rails_helper'
 require 'webmock/rspec'
 
-# WARNING: Some tests require real backend answers, so make sure you uncomment
-# this line and start a test backend.
-# CONFIG['global_write_through'] = true
-
-RSpec.describe Kiwi::Image, vcr: true do
+RSpec.describe Kiwi::Image, :vcr do
   include_context 'a kiwi image xml'
   include_context 'an invalid kiwi image xml'
 
@@ -215,13 +210,13 @@ RSpec.describe Kiwi::Image, vcr: true do
   describe '#to_xml' do
     context 'without a package' do
       context 'with repositories, packages and preference' do
+        subject { Nokogiri::XML::Document.parse(kiwi_image.to_xml) }
+
         before do
           kiwi_image.repositories << create(:kiwi_repository)
           kiwi_image.package_groups << create(:kiwi_package_group_non_empty, kiwi_type: 'image')
           kiwi_image.save
         end
-
-        subject { Nokogiri::XML::Document.parse(kiwi_image.to_xml) }
 
         it { expect(subject.errors).to be_empty }
         it { expect(subject.xpath('.//image').length).to be(1) }
@@ -238,11 +233,11 @@ RSpec.describe Kiwi::Image, vcr: true do
       end
 
       context 'with preference type_image = "docker" but without containerconfig attributes' do
+        subject { kiwi_image.to_xml }
+
         before do
           kiwi_image.preferences.first.update(type_containerconfig_name: nil, type_containerconfig_tag: nil)
         end
-
-        subject { kiwi_image.to_xml }
 
         it 'output the xml without any mention of containerconfig' do
           expect(subject).not_to include('<containerconfig')
@@ -251,13 +246,13 @@ RSpec.describe Kiwi::Image, vcr: true do
     end
 
     context 'without kiwi image file' do
+      subject { create(:kiwi_image_with_package, project: project) }
+
       after do
         login user
         subject.package.destroy
         logout
       end
-
-      subject { create(:kiwi_image_with_package, project: project) }
 
       it 'returns nil' do
         expect(subject.to_xml).to be_nil
@@ -265,6 +260,8 @@ RSpec.describe Kiwi::Image, vcr: true do
     end
 
     context 'with kiwi image file' do
+      subject { Nokogiri::XML::Document.parse(kiwi_image.to_xml) }
+
       let(:kiwi_image) { create(:kiwi_image_with_package, project: project, with_kiwi_file: true, file_content: kiwi_xml) }
 
       after do
@@ -272,8 +269,6 @@ RSpec.describe Kiwi::Image, vcr: true do
         kiwi_image.package.destroy
         logout
       end
-
-      subject { Nokogiri::XML::Document.parse(kiwi_image.to_xml) }
 
       it 'returns the xml for the kiwi image correctly' do
         expect(subject.errors).to be_empty
@@ -285,41 +280,40 @@ RSpec.describe Kiwi::Image, vcr: true do
     end
 
     context 'with a invalid kiwi image file' do
+      subject { create(:kiwi_image_with_package, project: project, with_kiwi_file: true, file_content: 'Invalid content for a xml file') }
+
       after do
         login user
         subject.package.destroy
         logout
       end
-
-      subject { create(:kiwi_image_with_package, project: project, with_kiwi_file: true, file_content: 'Invalid content for a xml file') }
 
       it { expect(subject.to_xml).to be_nil }
     end
 
     context 'with a invalid kiwi image file (without image children)' do
+      subject do
+        create(:kiwi_image_with_package, project: project,
+                                         with_kiwi_file: true, file_content: 'Invalid content for a kiwi xml file<image></image>')
+      end
+
       after do
         login user
         subject.package.destroy
         logout
-      end
-
-      subject do
-        create(:kiwi_image_with_package, project: project,
-                                         with_kiwi_file: true, file_content: 'Invalid content for a kiwi xml file<image></image>')
       end
 
       it { expect(subject.to_xml).to be_nil }
     end
 
     context 'with a kiwi file with packages, repositories and a description' do
+      subject { Nokogiri::XML::Document.parse(kiwi_image.to_xml) }
+
       let(:package) { create(:package) }
       let(:kiwi_image) { Kiwi::Image.build_from_xml(kiwi_xml, 'some_md5') }
 
-      subject { Nokogiri::XML::Document.parse(kiwi_image.to_xml) }
-
       before do
-        allow(package).to receive(:kiwi_image_file).and_return('config.kiwi')
-        allow(package).to receive(:source_file).and_return(kiwi_xml)
+        allow(package).to receive_messages(kiwi_image_file: 'config.kiwi', source_file: kiwi_xml)
         kiwi_image.package = package
         kiwi_image.save
       end
@@ -332,14 +326,13 @@ RSpec.describe Kiwi::Image, vcr: true do
     end
 
     context 'with a kiwi file without packages and repositories' do
+      subject { Nokogiri::XML::Document.parse(kiwi_image.to_xml) }
+
       let(:package) { create(:package) }
       let(:kiwi_image) { Kiwi::Image.build_from_xml(Kiwi::Image::DEFAULT_KIWI_BODY, 'some_md5') }
 
-      subject { Nokogiri::XML::Document.parse(kiwi_image.to_xml) }
-
       before do
-        allow(package).to receive(:kiwi_image_file).and_return('config.kiwi')
-        allow(package).to receive(:source_file).and_return(Kiwi::Image::DEFAULT_KIWI_BODY)
+        allow(package).to receive_messages(kiwi_image_file: 'config.kiwi', source_file: Kiwi::Image::DEFAULT_KIWI_BODY)
         kiwi_image.save
         kiwi_image.package = package
         kiwi_image.package_groups << create(:kiwi_package_group_non_empty, kiwi_type: 'image')
@@ -356,7 +349,7 @@ RSpec.describe Kiwi::Image, vcr: true do
     context 'without a package' do
       it { expect(kiwi_image.write_to_backend).to be(false) }
 
-      it 'will not call save! method' do
+      it 'does not call save! method' do
         expect(kiwi_image).not_to receive(:save!)
         kiwi_image.write_to_backend
       end
@@ -458,47 +451,49 @@ RSpec.describe Kiwi::Image, vcr: true do
     context 'with use_project_repositories set' do
       subject { Kiwi::Image.binaries_available(project.name, true, []) }
 
-      it { expect(subject.keys).to match_array(['package1', 'package2', 'package3']) }
-      it { expect(subject['package1']).to match_array(['i586', 'x86_64']) }
-      it { expect(subject['package2']).to match_array(['i586']) }
-      it { expect(subject['package3']).to match_array(['x86_64']) }
+      it { expect(subject.keys).to contain_exactly('package1', 'package2', 'package3') }
+      it { expect(subject['package1']).to contain_exactly('i586', 'x86_64') }
+      it { expect(subject['package2']).to contain_exactly('i586') }
+      it { expect(subject['package3']).to contain_exactly('x86_64') }
     end
 
     context 'with OBS and "normal" repositories set' do
       subject { Kiwi::Image.binaries_available(project.name, false, ['obs://home:tom/standard', 'http://example.com/']) }
 
-      it { expect(subject.keys).to match_array(['package1', 'package3', 'package4']) }
-      it { expect(subject['package1']).to match_array(['x86_64']) }
-      it { expect(subject['package3']).to match_array(['i586']) }
-      it { expect(subject['package4']).to match_array(['i586', 'x86_64']) }
+      it { expect(subject.keys).to contain_exactly('package1', 'package3', 'package4') }
+      it { expect(subject['package1']).to contain_exactly('x86_64') }
+      it { expect(subject['package3']).to contain_exactly('i586') }
+      it { expect(subject['package4']).to contain_exactly('i586', 'x86_64') }
     end
   end
 
   describe '#find_binaries_by_name' do
+    subject { Kiwi::Image }
+
     let(:binaries_available_sample) do
-      { 'apache' => ['i586', 'x86_64'], 'apache2' => ['x86_64'],
-        'appArmor' => ['i586', 'x86_64'], 'bcrypt' => ['x86_64'] }
+      { 'apache' => %w[i586 x86_64], 'apache2' => ['x86_64'],
+        'appArmor' => %w[i586 x86_64], 'bcrypt' => ['x86_64'] }
     end
 
     before do
       allow(subject).to receive(:binaries_available).and_return(binaries_available_sample)
     end
 
-    subject { Kiwi::Image }
-
     it { expect(subject.find_binaries_by_name('', 'project', [], use_project_repositories: true)).to eq(binaries_available_sample) }
 
     it do
-      expect(subject.find_binaries_by_name('ap', 'project', [], use_project_repositories: true)).to eq('apache' => ['i586', 'x86_64'],
-                                                                                                       'apache2' => ['x86_64'], 'appArmor' => ['i586', 'x86_64'])
+      expect(subject.find_binaries_by_name('ap', 'project', [], use_project_repositories: true)).to eq('apache' => %w[i586 x86_64],
+                                                                                                       'apache2' => ['x86_64'], 'appArmor' => %w[i586 x86_64])
     end
 
-    it { expect(subject.find_binaries_by_name('app', 'project', [], use_project_repositories: true)).to eq('appArmor' => ['i586', 'x86_64']) }
+    it { expect(subject.find_binaries_by_name('app', 'project', [], use_project_repositories: true)).to eq('appArmor' => %w[i586 x86_64]) }
     it { expect(subject.find_binaries_by_name('b', 'project', [], use_project_repositories: true)).to eq('bcrypt' => ['x86_64']) }
     it { expect(subject.find_binaries_by_name('c', 'project', [], use_project_repositories: true)).to be_empty }
   end
 
   describe '#nested_error_messages' do
+    subject { kiwi_image.nested_error_messages }
+
     let!(:kiwi_repository) { create(:kiwi_repository, image: kiwi_image) }
     let(:result) do
       {
@@ -524,8 +519,6 @@ RSpec.describe Kiwi::Image, vcr: true do
       kiwi_image.package_groups[0].packages[0].name = nil
       kiwi_image.valid?
     end
-
-    subject { kiwi_image.nested_error_messages }
 
     it { is_expected.to eq(result) }
   end

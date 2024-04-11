@@ -186,13 +186,20 @@ function loadDiffs(element){
 }
 
 function loadChanges() { // jshint ignore:line
-  $('.loading-diff').removeClass('invisible');
-  var element = $('#changes-tab');
-  var url = '/request/' + element.data('request-number') + '/request_action/' + element.data('request-action-id') + '/changes';
+  $('.tab-content.sourcediff .loading').removeClass('invisible');
+
+  // Take the parameters from the container data
+  var url = $('#sourcediff-container').data('url');
+  var diffToSupersededId = $('#sourcediff-container').data('diff-to-superseded-id');
+  var queryString = diffToSupersededId ? '?diff_to_superseded=' + diffToSupersededId : '';
+
   $.ajax({
-    url: url,
+    url: url + queryString,
     success: function() {
-      $('.loading-diff').addClass('invisible');
+      $('.tab-content.sourcediff .loading').addClass('invisible');
+    },
+    error: function() {
+      $('#sourcediff-container .result').text('Something went wrong while loading changes.');
     }
   });
 }

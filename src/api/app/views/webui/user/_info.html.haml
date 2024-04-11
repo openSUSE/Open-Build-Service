@@ -7,8 +7,8 @@
       = render partial: 'webui/user/basic_info',
                locals: { user: user, role_titles: role_titles, configuration: configuration, account_edit_link: account_edit_link }
 
-    - if user.rss_token && is_user
-      = link_to(user_rss_notifications_path(token: user.rss_token.string, format: 'rss'),
+    - if is_user && user.rss_secret.present?
+      = link_to(user_rss_notifications_path(secret: user.rss_secret, format: 'rss'),
                                             title: 'RSS Feed for Notifications', class: 'd-block') do
         %i.fas.fa-rss.me-1
         RSS for Notifications
@@ -19,5 +19,5 @@
         - groups.each do |group|
           %li.list-group-item.d-flex.justify-content-between.align-items-center.p-2
             = link_to(group.title, group_path(group))
-            %span.badge.bg-primary
+            %span.badge.text-bg-primary
               #{group.tasks} #{'task'.pluralize(group.tasks)}

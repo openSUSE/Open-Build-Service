@@ -1,4 +1,3 @@
-# rubocop:disable Layout/LineLength
 # rubocop:disable Metrics/AbcSize
 # rubocop:disable Metrics/MethodLength
 require File.expand_path(File.dirname(__FILE__) + '/..') + '/test_helper'
@@ -758,7 +757,7 @@ class ChannelMaintenanceTests < ActionDispatch::IntegrationTest
     assert_response :success
     assert_xml_tag tag: 'collection', attributes: { matches: '2' }
 
-    # node existens check does not need a boolean()
+    # node existence check does not need a boolean()
     get '/search/channel/binary?match=updatefor[@project="BaseDistro"+and+@product="fixed"]+and+target/disabled'
     assert_response :success
     assert_xml_tag tag: 'collection', attributes: { matches: '2' }
@@ -977,4 +976,3 @@ class ChannelMaintenanceTests < ActionDispatch::IntegrationTest
     assert_response :success
   end
 end
-# rubocop:enable Layout/LineLength

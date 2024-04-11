@@ -14,11 +14,15 @@ class NotificationExcerptComponent < ApplicationComponent
              @notifiable.description.to_s # description can be nil
            when 'Comment'
              helpers.render_without_markdown(@notifiable.body)
+           when 'Report', 'Decision', 'Appeal'
+             @notifiable.reason
+           when 'WorkflowRun'
+             "In repository #{@notifiable.repository_full_name}"
            else
              ''
            end
 
-    tag.p(truncate_to_first_new_line(text), class: ['mt-3', 'mb-0'])
+    tag.p(truncate_to_first_new_line(text), class: %w[mt-3 mb-0])
   end
 
   private

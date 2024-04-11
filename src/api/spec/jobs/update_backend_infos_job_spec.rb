@@ -1,9 +1,4 @@
-require 'rails_helper'
-# WARNING: Some tests require real backend answers, so make sure you uncomment
-# this line and start a test backend.
-# CONFIG['global_write_through'] = true
-
-RSpec.describe UpdateBackendInfosJob, vcr: true do
+RSpec.describe UpdateBackendInfosJob, :vcr do
   let(:project) { create(:project, name: 'apache') }
   let(:package) { create(:package, name: 'mod_ssl', project: project) }
   let(:user) { create(:admin_user, login: 'myself') }
@@ -16,9 +11,9 @@ RSpec.describe UpdateBackendInfosJob, vcr: true do
     before do
       allow(Package).to receive(:find_by_project_and_name).and_return(package)
       allow(package).to receive(:update_backendinfo)
-    end
 
-    subject! { event } # UpdateBackendInfosJob gets called when the event is created
+      event # UpdateBackendInfosJob gets called when the event is created
+    end
 
     it { expect(package).to have_received(:update_backendinfo) }
   end
@@ -28,13 +23,12 @@ RSpec.describe UpdateBackendInfosJob, vcr: true do
     let!(:linking_backend_package) { BackendPackage.create(package: package2, links_to: package) }
 
     before do
-      allow(Package).to receive(:find_by_project_and_name).and_return(package)
+      allow(Package).to receive_messages(find_by_project_and_name: package, find_by_id: package2)
       allow(package).to receive(:update_backendinfo)
-      allow(Package).to receive(:find_by_id).and_return(package2)
       allow(package2).to receive(:update_backendinfo)
-    end
 
-    subject! { event } # UpdateBackendInfosJob gets called when the event is created
+      event # UpdateBackendInfosJob gets called when the event is created
+    end
 
     it { expect(package).to have_received(:update_backendinfo) }
     it { expect(package2).to have_received(:update_backendinfo) }
@@ -49,9 +43,9 @@ RSpec.describe UpdateBackendInfosJob, vcr: true do
     before do
       allow(Package).to receive(:find_by_project_and_name).and_return(package)
       allow(package).to receive(:update_backendinfo)
-    end
 
-    subject! { event_without_package } # UpdateBackendInfosJob gets called when the event is created
+      event_without_package # UpdateBackendInfosJob gets called when the event is created
+    end
 
     it { expect(package).not_to have_received(:update_backendinfo) }
   end

@@ -1,10 +1,12 @@
 class Webui::RepositoriesController < Webui::WebuiController
   before_action :set_project
   before_action :set_repository, only: [:state]
-  before_action :set_architectures, only: [:index, :change_flag]
-  before_action :find_repository_parent, only: [:index, :change_flag]
+  before_action :set_architectures, only: %i[index change_flag]
+  before_action :set_repository, only: [:state]
+  before_action :set_package, only: %i[index change_flag]
+  before_action :set_main_object, only: %i[index change_flag]
   before_action :check_ajax, only: :change_flag
-  after_action :verify_authorized, except: [:index, :state]
+  after_action :verify_authorized, except: %i[index state]
 
   # GET /repositories/:project(/:package)
   # Compatibility routes
@@ -17,7 +19,7 @@ class Webui::RepositoriesController < Webui::WebuiController
     @user_can_modify = @package.present? ? policy(@package).update? : policy(@project).update?
 
     @flags = {}
-    [:build, :debuginfo, :publish, :useforbuild].each do |flag_type|
+    %i[build debuginfo publish useforbuild].each do |flag_type|
       @flags[flag_type] = Flag::SpecifiedFlags.new(@main_object, flag_type)
     end
   end
@@ -46,7 +48,7 @@ class Webui::RepositoriesController < Webui::WebuiController
     else
       flash[:error] = "Can not add repository: #{repository.errors.full_messages.to_sentence}"
       respond_to do |format|
-        format.html { redirect_back(fallback_location: root_path) }
+        format.html { redirect_back_or_to root_path }
         format.js
       end
     end
@@ -87,7 +89,7 @@ class Webui::RepositoriesController < Webui::WebuiController
       msg << 'Repository not found.' if @project.valid? && !result
       respond_to do |format|
         flash[:error] = msg
-        format.html { redirect_back(fallback_location: root_path) }
+        format.html { redirect_back_or_to root_path }
         format.js
       end
     end
@@ -144,7 +146,7 @@ class Webui::RepositoriesController < Webui::WebuiController
     else
       flash[:error] = "Can not add image repository: #{repository.errors.full_messages.to_sentence}"
       respond_to do |format|
-        format.html { redirect_back(fallback_location: root_path) }
+        format.html { redirect_back_or_to root_path }
         format.js { render 'create' }
       end
     end
@@ -160,7 +162,7 @@ class Webui::RepositoriesController < Webui::WebuiController
 
     locals = { user_can_modify: true, project: @project, package: params[:package], architectures: @architectures }
     locals[:flags] = Flag::SpecifiedFlags.new(@main_object, flag_type)
-    locals[:table_id] = 'flag_table_' + flag_type
+    locals[:table_id] = "flag_table_#{flag_type}"
 
     render partial: 'webui/shared/repositories_flag_table', locals: locals
   end
@@ -188,16 +190,13 @@ class Webui::RepositoriesController < Webui::WebuiController
     @repository = @project.repositories.find_by!(name: params[:repository])
   end
 
-  def find_repository_parent
-    if params[:package]
-      # FIXME: Handle APIError different, this is just c&p from packages_controller
-      begin
-        @main_object = @package = Package.get_by_project_and_name(@project.to_param, params[:package], use_source: false, follow_project_links: true)
-      rescue APIError
-        raise ActiveRecord::RecordNotFound, 'Not Found'
-      end
-    else
-      @main_object = @project
-    end
+  def set_package
+    return unless params[:package]
+
+    require_package
+  end
+
+  def set_main_object
+    @main_object = @package || @project
   end
 end

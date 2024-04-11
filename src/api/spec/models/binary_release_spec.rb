@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe BinaryRelease do
   let(:binary_hash) do
     {
@@ -20,8 +18,7 @@ RSpec.describe BinaryRelease do
 
     context 'no binary release existed before' do
       before do
-        allow(Backend::Api::Server).to receive(:notification_payload).and_return([binary_hash].to_json)
-        allow(Backend::Api::Server).to receive(:delete_notification_payload).and_return('')
+        allow(Backend::Api::Server).to receive_messages(notification_payload: [binary_hash].to_json, delete_notification_payload: '')
       end
 
       it { expect { subject }.not_to raise_error }
@@ -42,8 +39,7 @@ RSpec.describe BinaryRelease do
       end
 
       before do
-        allow(Backend::Api::Server).to receive(:notification_payload).and_return([repeated_binary_hash].to_json)
-        allow(Backend::Api::Server).to receive(:delete_notification_payload).and_return('')
+        allow(Backend::Api::Server).to receive_messages(notification_payload: [repeated_binary_hash].to_json, delete_notification_payload: '')
         subject
       end
 
@@ -72,24 +68,6 @@ RSpec.describe BinaryRelease do
       end
 
       it { expect { described_class.update_binary_releases_via_json(repository, [repeated_binary_hash]) }.not_to raise_error }
-    end
-
-    context 'with repeated binary_releases' do
-      let!(:binary_releases) { create_list(:binary_release, 2, repository: repository) }
-      let(:repeated_binary_hash) do
-        {
-          'disturl' => binary_releases.first.binary_disturl,
-          'supportstatus' => binary_releases.first.binary_supportstatus,
-          'binaryid' => binary_releases.first.binary_id,
-          'buildtime' => binary_releases.first.binary_buildtime.to_i,
-          'name' => binary_releases.first.binary_name,
-          'binaryarch' => binary_releases.first.binary_arch
-        }
-      end
-
-      subject { described_class.update_binary_releases_via_json(repository, [repeated_binary_hash]) }
-
-      it { expect { subject }.to change(BinaryRelease, :count).by(-1) }
     end
   end
 

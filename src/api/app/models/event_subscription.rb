@@ -7,7 +7,7 @@ class EventSubscription < ApplicationRecord
     source_maintainer: 'Maintainer of the source',
     target_maintainer: 'Maintainer of the target',
     reviewer: 'Reviewer',
-    commenter: 'Commenter',
+    commenter: 'Commenter or mentioned user',
     creator: 'Creator',
     watcher: 'Watching the project',
     source_watcher: 'Watching the source project',
@@ -16,7 +16,11 @@ class EventSubscription < ApplicationRecord
     package_watcher: 'Watching the package',
     source_package_watcher: 'Watching the source package',
     target_package_watcher: 'Watching the target package',
-    request_watcher: 'Watching the request'
+    request_watcher: 'Watching the request',
+    moderator: 'User with moderator role',
+    token_executor: 'User who runs the workflow',
+    reporter: 'Reporter',
+    offender: 'Offender'
   }.freeze
 
   enum channel: {
@@ -37,11 +41,13 @@ class EventSubscription < ApplicationRecord
   belongs_to :token, inverse_of: :event_subscriptions, optional: true
   belongs_to :package, optional: true
   belongs_to :workflow_run, inverse_of: :event_subscriptions, optional: true
+  belongs_to :bs_request, optional: true
 
   validates :receiver_role, inclusion: {
-    in: [:maintainer, :bugowner, :reader, :source_maintainer, :target_maintainer,
-         :reviewer, :commenter, :creator, :watcher, :source_watcher, :target_watcher,
-         :package_watcher, :target_package_watcher, :source_package_watcher, :request_watcher, :any_role]
+    in: %i[maintainer bugowner reader source_maintainer target_maintainer
+           reviewer commenter creator watcher source_watcher target_watcher
+           package_watcher target_package_watcher source_package_watcher request_watcher any_role
+           moderator reporter offender token_executor]
   }
 
   scope :for_eventtype, ->(eventtype) { where(eventtype: eventtype) }
@@ -113,6 +119,7 @@ end
 #  receiver_role   :string(255)      not null
 #  created_at      :datetime
 #  updated_at      :datetime
+#  bs_request_id   :integer          indexed
 #  group_id        :integer          indexed
 #  package_id      :integer          indexed
 #  token_id        :integer          indexed
@@ -121,9 +128,14 @@ end
 #
 # Indexes
 #
+#  index_event_subscriptions_on_bs_request_id    (bs_request_id)
 #  index_event_subscriptions_on_group_id         (group_id)
 #  index_event_subscriptions_on_package_id       (package_id)
 #  index_event_subscriptions_on_token_id         (token_id)
 #  index_event_subscriptions_on_user_id          (user_id)
 #  index_event_subscriptions_on_workflow_run_id  (workflow_run_id)
+#
+# Foreign Keys
+#
+#  fk_rails_...  (bs_request_id => bs_requests.id)
 #

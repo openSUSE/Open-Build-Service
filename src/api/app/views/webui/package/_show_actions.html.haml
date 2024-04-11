@@ -1,5 +1,5 @@
 - content_for :actions do
-  - if bugowners_mail.present? && configuration['bugzilla_url']
+  - if bugowners_mail.present? && Configuration.bugzilla_url.present?
     = render partial: 'webui/package/show_actions/bugzilla_owner', locals: { bugowners_mail: bugowners_mail,
                                                                                             package_name: package.name, project_name: project.name }
   - if User.session
@@ -26,3 +26,5 @@
       //TODO: only users w/o rights should see this, maintainers should get a different dialog:
     - if package.develpackage
       = render partial: 'webui/package/show_actions/request_devel_project_change', locals: { package: package, project: project }
+
+  = render partial: 'webui/package/show_actions/report_package', locals: { package: package }

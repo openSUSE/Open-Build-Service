@@ -6,9 +6,11 @@ class User < ApplicationRecord
   include Flipper::Identifier
 
   # Keep in sync with states defined in db/schema.rb
-  STATES = ['unconfirmed', 'confirmed', 'locked', 'deleted', 'subaccount'].freeze
+  STATES = %w[unconfirmed confirmed locked deleted subaccount].freeze
   NOBODY_LOGIN = '_nobody_'.freeze
   MAX_BIOGRAPHY_LENGTH_ALLOWED = 250
+
+  enum :color_theme, %w[system light dark]
 
   # disable validations because there can be users which don't have a bcrypt
   # password yet. this is for backwards compatibility
@@ -30,8 +32,6 @@ class User < ApplicationRecord
                           dependent: :destroy,
                           inverse_of: :token_workflow
 
-  has_one :rss_token, class_name: 'Token::Rss', dependent: :destroy, foreign_key: :executor_id
-
   has_many :reviews, dependent: :nullify
 
   has_many :event_subscriptions, inverse_of: :user
@@ -49,9 +49,6 @@ class User < ApplicationRecord
   has_many :bs_request_actions_seen_by_users, dependent: :nullify
   has_many :bs_request_actions_seen, through: :bs_request_actions_seen_by_users, source: :bs_request_action
 
-  # users have 0..1 user_registration records assigned to them
-  has_one :user_registration
-
   has_one :ec2_configuration, class_name: 'Cloud::Ec2::Configuration', dependent: :destroy
   has_one :azure_configuration, class_name: 'Cloud::Azure::Configuration', dependent: :destroy
   has_many :upload_jobs, class_name: 'Cloud::User::UploadJob', dependent: :destroy
@@ -64,16 +61,21 @@ class User < ApplicationRecord
   has_many :acknowledged_status_messages, through: :status_message_acknowledgements, class_name: 'StatusMessage', source: 'status_message'
 
   has_many :disabled_beta_features, dependent: :destroy
+  has_many :reports, as: :reportable, dependent: :nullify
+  has_many :submitted_reports, class_name: 'Report'
+
+  has_many :moderated_comments, class_name: 'Comment', foreign_key: 'moderator_id'
+  has_many :decisions, foreign_key: 'moderator_id'
+  has_many :canned_responses, dependent: :destroy
 
   scope :confirmed, -> { where(state: 'confirmed') }
   scope :all_without_nobody, -> { where.not(login: NOBODY_LOGIN) }
   scope :not_deleted, -> { where.not(state: 'deleted') }
   scope :not_locked, -> { where.not(state: 'locked') }
-  scope :with_login_prefix, ->(prefix) { where('login LIKE ?', "#{prefix}%") }
   scope :active, -> { confirmed.or(User.unscoped.where(state: :subaccount, owner: User.unscoped.confirmed)) }
   scope :staff, -> { joins(:roles).where('roles.title' => 'Staff') }
-  scope :not_staff, -> { where.not(id: User.unscoped.staff.pluck(:id)) }
   scope :admins, -> { joins(:roles).where('roles.title' => 'Admin') }
+  scope :moderators, -> { joins(:roles).where('roles.title' => 'Moderator') }
 
   scope :in_beta, -> { where(in_beta: true) }
   scope :in_rollout, -> { where(in_rollout: true) }
@@ -118,12 +120,11 @@ class User < ApplicationRecord
   validates :password, length: { minimum: 6, maximum: ActiveModel::SecurePassword::MAX_PASSWORD_LENGTH_ALLOWED }, allow_nil: true
   validates :password, confirmation: true, allow_blank: true
   validates :biography, length: { maximum: MAX_BIOGRAPHY_LENGTH_ALLOWED }
+  validates :rss_secret, uniqueness: true, length: { maximum: 200 }, allow_blank: true
+  validates :color_theme, inclusion: { in: color_themes.keys }, if: -> { Flipper.enabled?('color_themes') }
 
-  after_create :create_home_project, :track_create
-
-  def track_create
-    RabbitmqBus.send_to_bus('metrics', 'user.create value=1')
-  end
+  after_create :create_home_project, :measure_create
+  after_update :measure_delete
 
   def create_home_project
     # avoid errors during seeding
@@ -314,18 +315,6 @@ class User < ApplicationRecord
     !obj.nil?
   end
 
-  # This method creates a new registration token for the current user. Raises
-  # a MultipleRegistrationTokens Exception if the user already has a
-  # registration token assigned to him.
-  #
-  # Use this method instead of creating user_registration objects directly!
-  def create_user_registration
-    raise unless user_registration.nil?
-
-    token = UserRegistration.new
-    self.user_registration = token
-  end
-
   # This method checks whether the given value equals the password when
   # hashed with this user's password hash type. Returns a boolean.
   def deprecated_password_equals?(value)
@@ -365,9 +354,9 @@ class User < ApplicationRecord
     when 'unconfirmed'
       true
     when 'confirmed'
-      to.in?(['locked', 'deleted'])
+      to.in?(%w[locked deleted])
     when 'locked'
-      to.in?(['confirmed', 'deleted'])
+      to.in?(%w[confirmed deleted])
     when 'deleted'
       to == 'confirmed'
     else
@@ -420,10 +409,18 @@ class User < ApplicationRecord
     login == NOBODY_LOGIN
   end
 
+  def is_moderator?
+    roles.exists?(title: 'Moderator')
+  end
+
   def is_active?
     return owner.is_active? if owner
 
     self.state == 'confirmed'
+  end
+
+  def is_deleted?
+    state == 'deleted'
   end
 
   def is_in_group?(group)
@@ -530,7 +527,7 @@ class User < ApplicationRecord
 
     return true if is_admin?
 
-    abies = object.attrib_namespace_modifiable_bies.includes([:user, :group])
+    abies = object.attrib_namespace_modifiable_bies.includes(%i[user group])
     abies.any? { |rule| attribute_modifier_rule_matches?(rule) }
   end
 
@@ -547,7 +544,7 @@ class User < ApplicationRecord
 
     return true if is_admin?
 
-    abies = atype.attrib_type_modifiable_bies.includes([:user, :group, :role])
+    abies = atype.attrib_type_modifiable_bies.includes(%i[user group role])
     # no rules -> maintainer
     return can_modify?(object) if abies.empty?
 
@@ -657,25 +654,30 @@ class User < ApplicationRecord
     false
   end
 
-  def delete!
+  def delete!(adminnote: nil)
     # remove user data as much as possible
     # but we must NOT remove the information that the account did exist
     # or another user could take over the identity which can open security
     # issues (other infrastructur and systems using repositories)
 
+    self.adminnote = adminnote if adminnote.present?
     self.email = ''
     self.realname = ''
     self.state = 'deleted'
+    comments.destroy_all
     save!
 
     # wipe also all home projects
-    Project.where('name LIKE ?', "#{home_project_name}:%").or(Project.where(name: home_project_name)).each do |project|
-      project.commit_opts = { comment: 'User account got deleted' }
+    destroy_home_projects(reason: 'User account got deleted')
+
+    true
+  end
+
+  def destroy_home_projects(reason:)
+    Project.where('name LIKE ?', "#{home_project_name}:%").or(Project.where(name: home_project_name)).find_each do |project|
+      project.commit_opts = { comment: "#{reason}" }
       project.destroy
     end
-
-    RabbitmqBus.send_to_bus('metrics', 'user.delete value=1') unless state_before_last_save == 'deleted'
-    true
   end
 
   def involved_projects
@@ -685,18 +687,6 @@ class User < ApplicationRecord
   # lists packages maintained by this user and are not in maintained projects
   def involved_packages
     Package.for_user(id).or(Package.for_group(group_ids)).where.not(project: involved_projects)
-  end
-
-  # list packages owned by this user.
-  def owned_packages
-    owned = []
-    begin
-      OwnerSearch::Owned.new.for(self).each do |owner|
-        owned << [owner.package, owner.project]
-      end
-    rescue APIError # no attribute set
-    end
-    owned
   end
 
   # lists reviews involving this user
@@ -730,7 +720,7 @@ class User < ApplicationRecord
 
   # list outgoing requests involving this user
   def outgoing_requests(search = nil, all_states: false)
-    states = all_states ? BsRequest::VALID_REQUEST_STATES : [:new, :review]
+    states = all_states ? BsRequest::VALID_REQUEST_STATES : %i[new review]
 
     result = requests_created.in_states(states).with_actions
     search.present? ? result.do_search(search) : result
@@ -835,7 +825,7 @@ class User < ApplicationRecord
   def proxy_realname(env)
     return unless env['HTTP_X_FIRSTNAME'].present? && env['HTTP_X_LASTNAME'].present?
 
-    env['HTTP_X_FIRSTNAME'].force_encoding('UTF-8') + ' ' + env['HTTP_X_LASTNAME'].force_encoding('UTF-8')
+    "#{env['HTTP_X_FIRSTNAME'].force_encoding('UTF-8')} #{env['HTTP_X_LASTNAME'].force_encoding('UTF-8')}"
   end
 
   def update_login_values(env)
@@ -866,7 +856,36 @@ class User < ApplicationRecord
     end
   end
 
+  def watched_requests
+    BsRequest.where(id: watched_items.where(watchable_type: 'BsRequest').pluck(:watchable_id)).order('number DESC')
+  end
+
+  def watched_packages
+    Package.where(id: watched_items.where(watchable_type: 'Package').pluck(:watchable_id)).order('LOWER(name), name')
+  end
+
+  def watched_projects
+    Project.where(id: watched_items.where(watchable_type: 'Project').pluck(:watchable_id)).order('LOWER(name), name')
+  end
+
+  # Can't use ActiveRecord::SecureToken because we don't want User to have
+  # a rss_secret by default. We want to skip creating Notification for the
+  # RSS channel if people don't use it.
+  def regenerate_rss_secret
+    update!(rss_secret: SecureRandom.base58(24))
+  end
+
   private
+
+  def measure_create
+    RabbitmqBus.send_to_bus('metrics', 'user.create value=1')
+  end
+
+  def measure_delete
+    return unless saved_change_to_attribute?('state', to: 'deleted')
+
+    RabbitmqBus.send_to_bus('metrics', 'user.delete value=1')
+  end
 
   # The currently logged in user (might be nil). It's reset after
   # every request and normally set during authentification
@@ -926,6 +945,8 @@ end
 #  id                            :integer          not null, primary key
 #  adminnote                     :text(65535)
 #  biography                     :string(255)      default("")
+#  blocked_from_commenting       :boolean          default(FALSE), not null, indexed
+#  color_theme                   :integer          default("system"), not null
 #  deprecated_password           :string(255)      indexed
 #  deprecated_password_hash_type :string(255)
 #  deprecated_password_salt      :string(255)
@@ -938,15 +959,19 @@ end
 #  login_failure_count           :integer          default(0), not null
 #  password_digest               :string(255)
 #  realname                      :string(200)      default(""), not null
-#  state                         :string           default("unconfirmed")
+#  rss_secret                    :string(200)      indexed
+#  state                         :string           default("unconfirmed"), indexed
 #  created_at                    :datetime
 #  updated_at                    :datetime
 #  owner_id                      :integer
 #
 # Indexes
 #
-#  index_users_on_in_beta     (in_beta)
-#  index_users_on_in_rollout  (in_rollout)
-#  users_login_index          (login) UNIQUE
-#  users_password_index       (deprecated_password)
+#  index_users_on_blocked_from_commenting  (blocked_from_commenting)
+#  index_users_on_in_beta                  (in_beta)
+#  index_users_on_in_rollout               (in_rollout)
+#  index_users_on_rss_secret               (rss_secret) UNIQUE
+#  index_users_on_state                    (state)
+#  users_login_index                       (login) UNIQUE
+#  users_password_index                    (deprecated_password)
 #

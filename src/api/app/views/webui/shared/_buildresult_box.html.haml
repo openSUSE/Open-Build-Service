@@ -32,13 +32,13 @@
     .card-body
       .tab-content
         .tab-pane.fade.show.active{ id: "build#{index}", role: 'tabpanel', aria: { labelledby: "build#{index}-tab" } }
-          .sticky-top.py-2.bg-white.border-bottom.border-light.clearfix
+          .sticky-top.py-2.bg-card.clearfix
             .btn.btn-outline-primary.build-refresh.float-end{ onclick: "updateBuildResult('#{index}')",
                                                               accesskey: 'r', title: 'Refresh Build Results' }
               Refresh
               %i.fas.fa-sync-alt{ id: "build#{index}-reload" }
           - if is_staged_request
-            %p.font-italic
+            %p.fst-italic
               From staging project
               = link_to(project, project_show_path(project))
           .result
@@ -48,7 +48,7 @@
               Refresh
               %i.fas.fa-sync-alt{ id: "rpm#{index}-reload" }
             - if is_staged_request
-              %p.font-italic
+              %p.fst-italic
                 From staging project
                 = link_to(project, project_show_path(project))
             .result

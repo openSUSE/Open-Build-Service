@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe FullTextSearch do
   let!(:project) { create(:project, name: 'test_project', title: '', description: '') }
   let(:another_project) { create(:project, name: 'test2', title: '', description: '') }
@@ -68,7 +66,7 @@ RSpec.describe FullTextSearch do
       end
 
       context 'classes project and package' do
-        let(:search_params) { search_param_text.merge(classes: ['project', 'package']) }
+        let(:search_params) { search_param_text.merge(classes: %w[project package]) }
 
         it { expect(subject).to eql([package, project]) }
       end
@@ -129,13 +127,13 @@ RSpec.describe FullTextSearch do
       context 'existent issue' do
         let(:search_params) { { issue_tracker_name: issue_tracker.name, issue_name: issue.name } }
 
-        it { expect(subject).to match_array([package, project]) }
+        it { expect(subject).to contain_exactly(package, project) }
       end
 
       context 'existent issue searching by project only' do
         let(:search_params) { { issue_tracker_name: issue_tracker.name, issue_name: issue.name, classes: ['project'] } }
 
-        it { expect(subject).to match_array([project]) }
+        it { expect(subject).to contain_exactly(project) }
       end
 
       context 'existent issue and non-existent text' do
@@ -147,7 +145,7 @@ RSpec.describe FullTextSearch do
       context 'existent issue and existent text' do
         let(:search_params) { { issue_tracker_name: issue_tracker.name, issue_name: issue.name, text: 'Package title' } }
 
-        it { expect(subject).to match_array([package]) }
+        it { expect(subject).to contain_exactly(package) }
       end
 
       context 'non-existent issue' do
@@ -185,13 +183,13 @@ RSpec.describe FullTextSearch do
                                             reference: :project, path: [:project])
           end
 
-          it { expect(subject).to match_array([project, project_2]) }
+          it { expect(subject).to contain_exactly(project, project_2) }
         end
 
         context 'existent attrib with text' do
           let(:search_params) { { attrib_type_id: attrib.attrib_type_id, text: 'another' } }
 
-          it { expect(subject).to match_array([project_2]) }
+          it { expect(subject).to contain_exactly(project_2) }
         end
       end
 
@@ -204,13 +202,13 @@ RSpec.describe FullTextSearch do
         context 'existent attrib' do
           let(:search_params) { { attrib_type_id: attrib.attrib_type_id } }
 
-          it { expect(subject).to match_array([package, package_2]) }
+          it { expect(subject).to contain_exactly(package, package_2) }
         end
 
         context 'existent attrib with text' do
           let(:search_params) { { attrib_type_id: attrib.attrib_type_id, text: 'another' } }
 
-          it { expect(subject).to match_array([package_2]) }
+          it { expect(subject).to contain_exactly(package_2) }
         end
       end
     end
@@ -233,7 +231,7 @@ RSpec.describe FullTextSearch do
             login admin_user
           end
 
-          it { expect(subject).to match_array([project]) }
+          it { expect(subject).to contain_exactly(project) }
         end
 
         context 'with normal user' do
@@ -255,7 +253,7 @@ RSpec.describe FullTextSearch do
             login admin_user
           end
 
-          it { expect(subject).to match_array([package]) }
+          it { expect(subject).to contain_exactly(package) }
         end
 
         context 'with normal user' do

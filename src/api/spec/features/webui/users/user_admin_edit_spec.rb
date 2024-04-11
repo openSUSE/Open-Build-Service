@@ -1,6 +1,6 @@
 require 'browser_helper'
 
-RSpec.describe "User's admin edit page", js: true do
+RSpec.describe "User's admin edit page", :js do
   let(:user) { create(:confirmed_user, realname: 'John Doe', email: 'john@suse.de') }
   let(:admin) { create(:admin_user) }
   let(:admin_role_html_id) { "user_role_ids_#{Role.find_by(title: 'Admin').id}" }
@@ -14,7 +14,7 @@ RSpec.describe "User's admin edit page", js: true do
 
     expect(find_field('confirmed', visible: false)).to be_checked
 
-    ['Admin', 'unconfirmed', 'deleted', 'locked'].each do |field|
+    %w[Admin unconfirmed deleted locked].each do |field|
       expect(find_field(field, visible: false)).not_to be_checked
     end
   end

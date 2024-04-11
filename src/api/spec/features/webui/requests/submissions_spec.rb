@@ -1,6 +1,6 @@
 require 'browser_helper'
 
-RSpec.describe 'Requests_Submissions', js: true, vcr: true do
+RSpec.describe 'Requests_Submissions', :js, :vcr do
   let(:submitter) { create(:confirmed_user, :with_home, login: 'madam_submitter') }
   let(:source_project) { submitter.home_project }
   let(:source_package) { create(:package_with_file, name: 'Quebec', project: source_project) }
@@ -74,6 +74,34 @@ RSpec.describe 'Requests_Submissions', js: true, vcr: true do
       end
     end
 
+    describe 'submitting a package with a binary diff' do
+      let(:source_package_with_binary) { create(:package_with_file, name: 'Toronto', project: source_project) }
+      let(:target_package_with_binary) { create(:package_with_file, name: 'Toronto', project: target_project) }
+      let(:bs_request) do
+        create(:bs_request_with_submit_action,
+               creator: submitter,
+               target_project: target_project,
+               target_package: target_package_with_binary,
+               source_project: source_project,
+               source_package: source_package_with_binary)
+      end
+
+      before do
+        login submitter
+
+        source_package_with_binary.save_file(filename: 'new_file.tar.gz', file: file_fixture('bigfile_archive.tar.gz').read)
+        login receiver
+        target_package_with_binary.save_file(filename: 'new_file.tar.gz', file: file_fixture('bigfile_archive_2.tar.gz').read)
+        login submitter
+      end
+
+      it 'displays a diff' do
+        visit request_show_path(bs_request)
+        wait_for_ajax
+        expect(page).to have_text('new_file.tar.gz/bigfile.txt')
+      end
+    end
+
     describe 'prefill form for a branched package' do
       let(:branched_package_name) { "#{target_package}_branch" }
 
@@ -81,12 +109,11 @@ RSpec.describe 'Requests_Submissions', js: true, vcr: true do
         login submitter
 
         # TODO: Create a factory for this (branch a package and save a new file in it - to be able to submit the branched package)
-        BranchPackage.new(
-          project: source_project.name,
-          package: source_package.name,
-          target_project: source_project.name,
-          target_package: branched_package_name
-        ).branch
+        create(:branch_package,
+               project: source_project.name,
+               package: source_package.name,
+               target_project: source_project.name,
+               target_package: branched_package_name)
         Package.find_by(project_id: source_project.id, name: branched_package_name).save_file(filename: 'new_file', file: 'I am a new file')
       end
 
@@ -104,18 +131,20 @@ RSpec.describe 'Requests_Submissions', js: true, vcr: true do
       end
     end
 
-    describe 'when under the beta program', beta: true do
+    describe 'when under the beta program', :beta do
       describe 'submit several packages at once against a factory staging project' do
         let!(:factory) { create(:project, name: 'openSUSE:Factory') }
-        let!(:staging_workflow) { create(:staging_workflow, project: factory) }
+        let!(:staging_workflow) { create(:staging_workflow, project: factory, commit_user: factory.commit_user) }
         # Create another action to submit new files from different packages to package_b
         let!(:another_bs_request_action) do
-          create(:bs_request_action_submit,
-                 bs_request: bs_request,
-                 source_project: source_project,
-                 source_package: source_package,
-                 target_project: factory,
-                 target_package: target_package_b)
+          receiver.run_as do
+            create(:bs_request_action_submit,
+                   bs_request: bs_request,
+                   source_project: source_project,
+                   source_package: source_package,
+                   target_project: factory,
+                   target_package: target_package_b)
+          end
         end
         let(:bs_request) do
           create(:bs_request_with_submit_action,
@@ -140,7 +169,8 @@ RSpec.describe 'Requests_Submissions', js: true, vcr: true do
           login receiver
           visit request_show_path(bs_request.number)
 
-          expect(page).to have_text('Select Action')
+          action = bs_request.bs_request_actions.first
+          expect(page).to have_text("#{action.target_project} / #{action.target_package}")
           expect(page).to have_text('Next')
           expect(page).to have_text("(of #{bs_request.bs_request_actions.count})")
           expect(page).to have_css('.bg-staging')

@@ -9,7 +9,7 @@ RSpec.describe 'Package', type: :feature do
     logout
   end
 
-  it 'should be able to create new' do
+  it 'is able to create new' do
     within('#left-navigation') do
       click_link('Your Home Project')
     end
@@ -21,18 +21,16 @@ RSpec.describe 'Package', type: :feature do
     expect(page).to have_content("Package 'hello_world' was created successfully")
   end
 
-  it 'should be able to upload files' do
+  it 'is able to upload files' do
     within('#left-navigation') do
       click_link('Your Home Project')
     end
     click_link('hello_world')
-    click_link('Add File')
-    attach_file('file', File.expand_path('../fixtures/hello_world.spec', __dir__), make_visible: true)
-    click_button('Add File')
-    expect(page).to have_content("The file 'hello_world.spec' has been successfully saved.")
+    attach_file('files', File.expand_path('../fixtures/hello_world.spec', __dir__), make_visible: true)
+    expect(page).to have_content('hello_world.spec have been successfully saved.')
   end
 
-  it 'should be able to branch' do
+  it 'is able to branch' do
     within('#left-navigation') do
       click_link('Your Home Project')
     end
@@ -45,7 +43,7 @@ RSpec.describe 'Package', type: :feature do
     expect(page).to have_content('build.spec')
   end
 
-  it 'should be able to delete' do
+  it 'is able to delete' do
     within('#left-navigation') do
       click_link('Your Home Project')
     end
@@ -58,7 +56,7 @@ RSpec.describe 'Package', type: :feature do
     expect(page).to have_content('Package was successfully removed.')
   end
 
-  it 'should be able to successfully build' do
+  it 'is able to successfully build' do
     100.downto(1) do |counter|
       visit('/package/show/home:Admin/hello_world')
       # Force to wait for the build results ajax call. page.all doesn't wait for AJAX calls to finish

@@ -198,6 +198,7 @@ our $packinfo = [
 	    'nosrcpkgs',	# kiwi
 	    'nativebuild',	# cross build: native
 	    'hasbuildenv',
+	    'bcntsynctag',
 	 [[ 'path' =>
 		'project',
 		'repository',
@@ -267,6 +268,7 @@ our $patchinfo = [
             'packager',
             'retracted',
             'stopped',
+            'seperate_build_arch', # for builds on each scheduler arch
             'zypp_restart_needed',
             'reboot_needed',
             'relogin_needed',
@@ -300,6 +302,7 @@ our $channel = [
 		'package',
 		'arch',
 		'supportstatus',
+		'superseded_by',
 	 ]],
      ]],
 ];
@@ -315,8 +318,8 @@ our $modulemd = [
 	[],
 	'macros',
      [[ 'dependencies' =>
-	    [ 'buildrequires' ],
-	    [ 'requires' ],
+	  [ 'buildrequires' ],
+	  [ 'requires' ],
      ]],
 ];
 
@@ -352,9 +355,9 @@ our $projpack = [
 		'originproject',
 		'revtime',
 		'constraintsmd5',	# md5sum of constraints file in srcmd5
-		[ $linked ],
+	      [ $linked ],
 		'error',
-		[ $packinfo ],
+	      [ $packinfo ],
 		$aggregatelist,
 		$patchinfo,
 		'channelmd5',
@@ -652,6 +655,8 @@ our $buildinfo = [
 	'slsadownloadurl',	# internal
 	'slsabuilder',   	# internal
 
+	'signflavor',   	# internal
+
       [ 'preinstallimage' =>
 	    'project',
 	    'repository',
@@ -686,14 +691,14 @@ our $jobstatus = [
 
 our $buildreason = [
     'reason' =>
-       [],
-       'explain',             # Readable reason
-       'time',                # unix time from start build
-       'oldsource',           # last build source md5 sum, if a source change was the reason
-       [[ 'packagechange' =>  # list changed files which are used for building
-          'change',           # kind of change (content/meta change, additional file or removed file)
-          'key',              # file name
-       ]],
+	[],
+	'explain',             # Readable reason
+	'time',                # unix time from start build
+	'oldsource',           # last build source md5 sum, if a source change was the reason
+     [[ 'packagechange' =>     # list changed files which are used for building
+	    'change',          # kind of change (content/meta change, additional file or removed file)
+	    'key',             # file name
+     ]],
 ];
 
 our $buildstatus = [
@@ -756,10 +761,11 @@ our $event = [
 	'projectservicesmd5',	# for type=servicedispatch
 	'oldsrcmd5',		# for type=servicedispatch
 	'details',              # for type=dispatchdetails
-        [[ 'included' =>        # for type=sourcepublish (optional)
-             'project',
-             'package',
-             'srcmd5' ]]
+     [[ 'included' =>           # for type=sourcepublish (optional)
+	     'project',
+	     'package',
+	     'srcmd5',
+     ]],
 ];
 
 our $events = [
@@ -829,6 +835,7 @@ our $binaryversionlist = [
 
 our $packagebinaryversionlist = [
     'packagebinaryversionlist' =>
+	'cookie',
      [[ 'binaryversionlist' =>
 	    'package',
 	    'code',
@@ -871,9 +878,9 @@ our $worker = [
         'flavor'
       ],
       [ 'hardware' =>
-        [ 'cpu' =>
-          [ 'flag' ],
-        ],
+          [ 'cpu' =>
+	      [ 'flag' ],
+          ],
         'processors',
         'jobs',
         'nativeonly',   # don't allow usage via the helper script
@@ -1045,11 +1052,13 @@ our $ajaxjob = [
 	'peer',
 	'request',
 	'state',
+	'requestid',
 ];
 
 our $ajaxstatus = [
     'ajaxstatus' =>
 	'starttime',
+	'pid',
 	'ev',
      [[ 'watcher' =>
 	    'filename',
@@ -1173,11 +1182,11 @@ our $pattern = [
 	'xmlns:rpm',  # obsolete, moved to patterns
 	[],
 	'name',
-    'arch',
+	'arch',
      [[ 'version' =>
-        'epoch',
-        'ver',
-        'rel',
+	    'epoch',
+	    'ver',
+	    'rel',
      ]],
      [[ 'summary' =>
 	    'lang',
@@ -1284,10 +1293,21 @@ our $pattern_id = [
 ];
 
 our $repoinfo_id = [
-     'repoinfo' =>
+    'repoinfo' =>
 	'project',
 	'repository',
 	'downloadurl',
+];
+
+our $issues = [
+    'issues' =>
+	 [[ 'issue' =>
+		'state',
+		'tracker',
+		'name',
+		'label',
+		'url',
+	 ]]
 ];
 
 our $sourcediff = [
@@ -1328,15 +1348,7 @@ our $sourcediff = [
               ],
          ]],
       ],
-      [ 'issues' =>
-	 [[ 'issue' =>
-		'state',
-		'tracker',
-		'name',
-		'label',
-		'url',
-	 ]]
-      ],
+      $issues,
 ];
 
 our $request = [
@@ -1384,6 +1396,7 @@ our $request = [
           ],
           [ $sourcediff ],
      ]],
+     $issues,                # issues of request description
       [ 'submit' =>          # this is old style, obsolete by request, but still supported
 	  [ 'source' =>
 		'project',
@@ -1417,13 +1430,13 @@ our $request = [
 	    'when',
 	    [],
 	    'comment',
-            [[ 'history' =>
-                   'who',
-                   'when',
-                   [],
-                   'comment',
-                   'description',
-            ]],
+	 [[ 'history' =>
+		'who',
+		'when',
+		[],
+		'comment',
+		'description',
+         ]],
      ]],
      [[ 'history' =>
 	    'name',
@@ -1500,42 +1513,42 @@ our $person = [
 	'email',
 	'realname',
       [ 'owner' =>
-                'userid',
-        ],
+	    'userid',
+      ],
 	'state',
       [ 'globalrole' ],
 	'ignore_auth_services',
       [ 'watchlist' =>
-		[[ 'project' =>
-			'name',
-		]],
-		[[ 'package' =>
-			'name',
-			'project'
-		]],
-		[[ 'request' =>
-			'number'
-		]],
+	 [[ 'project' =>
+		'name',
+	 ]],
+	 [[ 'package' =>
+		'name',
+		'project'
+	 ]],
+	 [[ 'request' =>
+		'number'
+	 ]],
       ],
 ];
 
 our $comps = [
     'comps' =>
      [[ 'group' =>
-	[],
-	'id',
+	    [],
+	    'id',
 	 [[ 'description' =>
-	    'xml:lang',
-	    '_content',
+		'xml:lang',
+		'_content',
 	 ]],
 	 [[ 'name' =>
-	    'xml:lang',
-	    '_content',
+		'xml:lang',
+		'_content',
 	 ]],
 	  [ 'packagelist' =>
 	     [[ 'packagereq' =>
-		'type',
-		'_content',
+		    'type',
+		    '_content',
 	     ]],
 	  ],
     ]],
@@ -1628,6 +1641,7 @@ our $updateinfoitem = [
 		    'arch',
 		    'src',
 		    'supportstatus',	# extension
+		    'superseded_by',    # extension
 		    [],
 		    'filename',
 		  [ 'sum' =>	# obsolete?
@@ -1684,10 +1698,11 @@ our $prestodelta = [
 our $configuration = [
     'configuration' =>
 	[],
-	'title',        #webui only
-	'tos_url',      #webui only
-	'description',  #webui only
-	'name',         #obsname
+	'title',           #webui only
+	'tos_url',         #webui only
+	'code_of_conduct', #webui only
+	'description',     #webui only
+	'name',            #obsname
 	'anonymous',
 	'registration',
 	'default_access_disabled',
@@ -1716,8 +1731,8 @@ our $configuration = [
       [ 'schedulers' =>
 	  [ 'arch' ],
       ],
-  'unlisted_projects_filter',
-  'unlisted_projects_filter_description'
+	'unlisted_projects_filter',
+	'unlisted_projects_filter_description'
 ];
 
 our $issue_trackers = [
@@ -2023,6 +2038,7 @@ our $report = [
 	    'license',
 	    'binaryid',
 	    'supportstatus',
+	    'superseded_by',
 	    'cpeid',
 	    'summary',
 	    'isbase',
@@ -2048,8 +2064,8 @@ our $publishedpath = [
 
 our $multibuild = [
     'multibuild' =>
-	  [ 'package' ],	# obsolete
-	  [ 'flavor' ],
+      [ 'package' ],	# obsolete
+      [ 'flavor' ],
 ];
 
 our $pubkeyinfo = [

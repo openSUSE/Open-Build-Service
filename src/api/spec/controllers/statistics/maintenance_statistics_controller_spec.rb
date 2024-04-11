@@ -1,4 +1,3 @@
-require 'rails_helper'
 require 'webmock/rspec'
 
 RSpec.describe Statistics::MaintenanceStatisticsController do
@@ -49,9 +48,9 @@ RSpec.describe Statistics::MaintenanceStatisticsController do
         before do
           stub_request(:get, maintenance_statistics_url(host: remote.remoteurl, project: 'my_project'))
             .to_return(status: 200, body: '<received><xml/></received>')
-        end
 
-        subject! { get :index, params: { format: :xml, project: "#{remote}:my_project" } }
+          get :index, params: { format: :xml, project: "#{remote}:my_project" }
+        end
 
         it 'forwards the request to the remote instance' do
           expect(a_request(:get, maintenance_statistics_url(host: remote.remoteurl, project: 'my_project'))).to have_been_made.once
@@ -70,7 +69,7 @@ RSpec.describe Statistics::MaintenanceStatisticsController do
       before do
         login(user)
 
-        get :index, params: { format: :xml, project: 'NonExistantProject' }
+        get :index, params: { format: :xml, project: 'NonExistentProject' }
       end
 
       it { expect(response).to have_http_status(:not_found) }

@@ -1,10 +1,6 @@
-require 'rails_helper'
 require 'webmock/rspec'
-# WARNING: If you change owner tests make sure you uncomment this line
-# and start a test backend. Some of the Owner methods
-# require real backend answers for projects/packages.
-# CONFIG['global_write_through'] = true
-RSpec.describe Webui::ProjectController, vcr: true do
+
+RSpec.describe Webui::ProjectController, :vcr do
   let(:user) { create(:confirmed_user, :with_home, login: 'tom') }
   let(:admin_user) { create(:admin_user, login: 'admin') }
   let(:apache_project) { create(:project, name: 'Apache') }
@@ -16,6 +12,7 @@ RSpec.describe Webui::ProjectController, vcr: true do
   let(:maintenance_project) { create(:maintenance_project, name: 'maintenance_project') }
   let(:project_with_package) { create(:project_with_package, name: 'NewProject', package_name: 'PackageExample') }
   let(:repo_for_user_home) { create(:repository, project: user.home_project) }
+  let(:json_response) { response.parsed_body }
 
   describe 'CSRF protection' do
     before do
@@ -29,7 +26,7 @@ RSpec.describe Webui::ProjectController, vcr: true do
       ActionController::Base.allow_forgery_protection = false
     end
 
-    it 'will protect forms without authenticity token' do
+    it 'protects forms without authenticity token' do
       expect { post :save_person, params: { project: user.home_project } }.to raise_error ActionController::InvalidAuthenticityToken
     end
   end
@@ -75,22 +72,20 @@ RSpec.describe Webui::ProjectController, vcr: true do
     context 'without search term' do
       before do
         get :autocomplete_projects
-        @json_response = response.parsed_body
       end
 
-      it { expect(@json_response).to contain_exactly(apache_project.name, apache2_project.name, opensuse_project.name) }
-      it { expect(@json_response).not_to include(apache_maintenance_incident_project.name) }
+      it { expect(json_response).to contain_exactly(apache_project.name, apache2_project.name, opensuse_project.name) }
+      it { expect(json_response).not_to include(apache_maintenance_incident_project.name) }
     end
 
     context 'with search term' do
       before do
         get :autocomplete_projects, params: { term: 'Apache' }
-        @json_response = response.parsed_body
       end
 
-      it { expect(@json_response).to contain_exactly(apache_project.name, apache2_project.name) }
-      it { expect(@json_response).not_to include(apache_maintenance_incident_project.name) }
-      it { expect(@json_response).not_to include(opensuse_project.name) }
+      it { expect(json_response).to contain_exactly(apache_project.name, apache2_project.name) }
+      it { expect(json_response).not_to include(apache_maintenance_incident_project.name) }
+      it { expect(json_response).not_to include(opensuse_project.name) }
     end
 
     context 'with a subprojects' do
@@ -99,19 +94,9 @@ RSpec.describe Webui::ProjectController, vcr: true do
       context 'and searching for parent project' do
         before do
           get :autocomplete_projects, params: { term: 'Apache' }
-          @json_response = response.parsed_body
         end
 
-        it { expect(@json_response).to include(apache_subproject.name) }
-      end
-
-      context 'and searching for parent project' do
-        before do
-          get :autocomplete_projects, params: { term: 'Apache:' }
-          @json_response = response.parsed_body
-        end
-
-        it { expect(@json_response).to include(apache_subproject.name) }
+        it { expect(json_response).to include(apache_subproject.name) }
       end
     end
   end
@@ -121,11 +106,10 @@ RSpec.describe Webui::ProjectController, vcr: true do
       apache_project
       apache_maintenance_incident_project
       get :autocomplete_incidents, params: { term: 'Apache' }
-      @json_response = response.parsed_body
     end
 
-    it { expect(@json_response).to contain_exactly(apache_maintenance_incident_project.name) }
-    it { expect(@json_response).not_to include(apache_project.name) }
+    it { expect(json_response).to contain_exactly(apache_maintenance_incident_project.name) }
+    it { expect(json_response).not_to include(apache_project.name) }
   end
 
   describe 'GET #autocomplete_packages' do
@@ -138,42 +122,39 @@ RSpec.describe Webui::ProjectController, vcr: true do
     context 'with a nonexistent project' do
       before do
         get :autocomplete_packages, params: { project: 'non:existent:project' }
-        @json_response = response.parsed_body
       end
 
-      it { expect(@json_response).to be_nil }
+      it { expect(json_response).to be_nil }
     end
 
     context 'without search term' do
       before do
         get :autocomplete_packages, params: { project: apache_project }
-        @json_response = response.parsed_body
       end
 
-      it { expect(@json_response).to contain_exactly('Apache_Package', 'Apache2_Package') }
-      it { expect(@json_response).not_to include('Apache_Package_Another_Project') }
+      it { expect(json_response).to contain_exactly('Apache_Package', 'Apache2_Package') }
+      it { expect(json_response).not_to include('Apache_Package_Another_Project') }
     end
 
     context 'with search term' do
       before do
         get :autocomplete_packages, params: { project: apache_project, term: 'Apache2' }
-        @json_response = response.parsed_body
       end
 
-      it { expect(@json_response).to contain_exactly('Apache2_Package') }
-      it { expect(@json_response).not_to include('Apache_Package') }
-      it { expect(@json_response).not_to include('Apache_Package_Another_Project') }
+      it { expect(json_response).to contain_exactly('Apache2_Package') }
+      it { expect(json_response).not_to include('Apache_Package') }
+      it { expect(json_response).not_to include('Apache_Package_Another_Project') }
     end
   end
 
   describe 'GET #autocomplete_repositories' do
+    let!(:repositories) { create_list(:repository, 5, project: apache_project) }
+
     before do
-      @repositories = create_list(:repository, 5, project: apache_project)
       get :autocomplete_repositories, params: { project: apache_project }
-      @json_response = response.parsed_body
     end
 
-    it { expect(@json_response).to match_array(@repositories.map(&:name)) }
+    it { expect(json_response).to match_array(repositories.map(&:name)) }
   end
 
   describe 'GET #users' do
@@ -244,8 +225,7 @@ RSpec.describe Webui::ProjectController, vcr: true do
     end
 
     it 'restores a project' do
-      allow(Project).to receive(:deleted?).and_return(true)
-      allow(Project).to receive(:restore).and_return(fake_project)
+      allow(Project).to receive_messages(deleted?: true, restore: fake_project)
 
       post :restore, params: { project: 'project_name' }
 
@@ -279,7 +259,7 @@ RSpec.describe Webui::ProjectController, vcr: true do
     context 'with patchinfo' do
       before do
         login admin_user
-        Patchinfo.new.create_patchinfo(apache_project.name, nil, comment: 'Fake comment', force: false)
+        create(:patchinfo, project_name: apache_project.name, comment: 'Fake comment', force: false)
         get :show, params: { project: apache_project }
       end
 
@@ -301,7 +281,7 @@ RSpec.describe Webui::ProjectController, vcr: true do
         get :show, params: { project: apache_project }
       end
 
-      it { expect(assigns(:bugowners_mail)).to match_array([user.email]) }
+      it { expect(assigns(:bugowners_mail)).to contain_exactly(user.email) }
     end
 
     context 'without bugowners' do
@@ -500,11 +480,11 @@ RSpec.describe Webui::ProjectController, vcr: true do
     end
 
     it 'without a repository param' do
-      expect { post :remove_path_from_target, params: { project: user } }.to raise_error ActiveRecord::RecordNotFound
+      expect { post :remove_path_from_target, params: { project: user.home_project } }.to raise_error ActiveRecord::RecordNotFound
     end
 
     it 'with a repository param but without a path param' do
-      expect { post :remove_path_from_target, params: { repository: repo_for_user_home.id, project: user } }.to raise_error ActiveRecord::RecordNotFound
+      expect { post :remove_path_from_target, params: { repository: repo_for_user_home.id, project: user.home_project } }.to raise_error ActiveRecord::RecordNotFound
     end
 
     context 'with a repository and path' do
@@ -561,8 +541,8 @@ RSpec.describe Webui::ProjectController, vcr: true do
         it { is_expected.to redirect_to(action: :show, project: user.home_project) }
 
         it do
-          expect(flash[:error]).to eq("Project can't be unlocked: Unlock of maintenance incident #{user.home_project.name} is not possible," \
-                                      " because there is a running release request: #{bs_request.id}")
+          expect(flash[:error]).to eq("Project can't be unlocked: Unlock of maintenance incident #{user.home_project.name} is not possible, " \
+                                      "because there is a running release request: #{bs_request.id}")
         end
       end
     end
@@ -670,7 +650,7 @@ RSpec.describe Webui::ProjectController, vcr: true do
        BsRequestAction::BuildNotFinished,
        BsRequestActionMaintenanceRelease::RepositoryWithoutReleaseTarget,
        BsRequestActionMaintenanceRelease::RepositoryWithoutArchitecture,
-       BsRequestActionMaintenanceRelease::ArchitectureOrderMissmatch,
+       ArchitectureOrderMissmatch,
        BsRequestAction::VersionReleaseDiffers,
        BsRequestAction::Errors::UnknownTargetProject,
        BsRequestAction::Errors::UnknownTargetPackage].each do |error_class|
@@ -775,14 +755,6 @@ RSpec.describe Webui::ProjectController, vcr: true do
         end
       end
     end
-
-    context 'with non existing project' do
-      before do
-        login admin_user
-      end
-
-      it { expect { post :move_path, params: { project: 'non:existent:project' } }.to raise_error ActiveRecord::RecordNotFound }
-    end
   end
 
   describe 'GET #monitor' do
@@ -877,7 +849,7 @@ RSpec.describe Webui::ProjectController, vcr: true do
           it { expect(assigns(:buildresult_unavailable)).to be_nil }
           it { expect(assigns(:packagenames)).to eq(['c++', 'redis']) }
           it { expect(assigns(:statushash)).to eq(statushash) }
-          it { expect(assigns(:repoarray)).to eq([['openSUSE_42.2', ['s390x']], ['openSUSE_Tumbleweed', ['i586', 'x86_64']]]) }
+          it { expect(assigns(:repoarray)).to eq([['openSUSE_42.2', ['s390x']], ['openSUSE_Tumbleweed', %w[i586 x86_64]]]) }
 
           it {
             expect(assigns(:repostatushash)).to eq('openSUSE_Tumbleweed' => { 'i586' => 'published', 'x86_64' => 'building' },
@@ -934,17 +906,17 @@ RSpec.describe Webui::ProjectController, vcr: true do
     let(:input) { 'ThisIsAPackage' }
 
     context 'a filter_string that matches' do
-      let(:filter_string) { 'Package' }
-
       subject { Webui::ProjectController.new.send(:filter_matches?, input, filter_string) }
+
+      let(:filter_string) { 'Package' }
 
       it { is_expected.to be_truthy }
     end
 
     context 'a filter_string does not match' do
-      let(:filter_string) { '!Package' }
-
       subject { Webui::ProjectController.new.send(:filter_matches?, input, filter_string) }
+
+      let(:filter_string) { '!Package' }
 
       it { is_expected.to be_falsey }
     end

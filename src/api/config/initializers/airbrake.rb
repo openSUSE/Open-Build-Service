@@ -42,7 +42,7 @@ Airbrake.configure do |c|
   # NOTE: This option *does not* work if you don't set the 'environment' option.
   # https://github.com/airbrake/airbrake-ruby#ignore_environments
   c.ignore_environments = if c.host.blank? || c.project_key.blank? || c.project_id.blank?
-                            ['production', 'development', 'test']
+                            %w[production development test]
                           else
                             ['development']
                           end
@@ -84,14 +84,14 @@ def ignore_by_class_and_message?(notice)
 end
 
 def ignore_by_backend_400_message?(message)
-  messages_to_ignore = ['<summary>conflict in file', '<summary>unknown request:', '<summary>bad link',
-                        '<summary>broken link in', '<summary>bad files', 'does not exist</summary>',
-                        'is illegal</summary>', '<summary>service in progress</summary>', '<summary>service error',
-                        '<summary>could not apply patch', '<summary>illegal characters</summary>',
-                        '<summary>repoid is empty</summary>', '<summary>packid is empty</summary>',
-                        '<summary>bad private key</summary>', '<summary>pubkey is already expired</summary>',
-                        '<summary>not a RSA pubkey</summary>', ' <summary>self-sig does not expire</summary>',
-                        '<summary>excess hash entries: '].freeze
+  messages_to_ignore = ['unknown request:', 'bad link',
+                        'broken link in', 'bad files', 'does not exist',
+                        'is illegal', 'service in progress', 'service error',
+                        'could not apply patch', 'illegal characters',
+                        'repoid is empty', 'packid is empty',
+                        'bad private key', 'pubkey is already expired',
+                        'not a RSA pubkey', ' self-sig does not expire',
+                        'excess hash entries: ', 'conflict in file'].freeze
   messages_to_ignore.each do |ignored_error_message|
     return true if message.include?(ignored_error_message)
   end
@@ -100,12 +100,14 @@ def ignore_by_backend_400_message?(message)
 end
 
 def ignore_by_class?(notice)
-  exceptions_to_ignore = ['ActiveRecord::RecordNotFound', 'ActionController::InvalidAuthenticityToken',
-                          'CGI::Session::CookieStore::TamperedWithCookie', 'ActionController::UnknownAction',
-                          'AbstractController::ActionNotFound', 'ActionView::MissingTemplate', 'Bunny::TCPConnectionFailedForAllHosts',
-                          'Timeout::Error', 'Net::HTTPBadResponse', 'Errno::ECONNRESET', 'Interrupt',
-                          'RoutesHelper::WebuiMatcher::InvalidRequestFormat', 'ActionDispatch::Http::MimeNegotiation::InvalidType',
-                          'ActionController::UnknownFormat', 'Backend::NotFoundError', 'AMQ::Protocol::EmptyResponseError']
+  exceptions_to_ignore = ['AMQ::Protocol::EmptyResponseError', 'AbstractController::ActionNotFound',
+                          'ActionController::BadRequest', 'ActionController::InvalidAuthenticityToken',
+                          'ActionController::UnknownAction', 'ActionController::UnknownFormat',
+                          'ActionDispatch::Http::MimeNegotiation::InvalidType',
+                          'ActiveRecord::RecordNotFound', 'Backend::NotFoundError',
+                          'Bunny::TCPConnectionFailedForAllHosts', 'CGI::Session::CookieStore::TamperedWithCookie',
+                          'Errno::ECONNRESET', 'Interrupt', 'Net::HTTPBadResponse',
+                          'RoutesHelper::WebuiMatcher::InvalidRequestFormat', 'Timeout::Error']
 
   notice[:errors].pluck(:type).intersect?(exceptions_to_ignore)
 end

@@ -1,87 +1,16 @@
-require 'rails_helper'
-
-RSpec.describe Workflow, vcr: true do
-  let(:user) { create(:confirmed_user, :with_home, login: 'cameron') }
-  let(:token) { create(:workflow_token, executor: user) }
-  let!(:workflow_run) { create(:workflow_run, token: token) }
-
+RSpec.describe Workflow, :vcr do
   subject do
     described_class.new(workflow_instructions: yaml, scm_webhook: SCMWebhook.new(payload: extractor_payload), token: token, workflow_run: workflow_run)
   end
+
+  let(:user) { create(:confirmed_user, :with_home, login: 'cameron') }
+  let(:token) { create(:workflow_token, executor: user) }
+  let!(:workflow_run) { create(:workflow_run, token: token) }
 
   describe '#call' do
     let(:yaml) do
       { 'steps' => [{ 'branch_package' => { 'source_project' => 'test-project', 'source_package' => 'test-package', 'target_project' => 'test-target-project',
                                             'target_package' => 'test-target-package' } }] }
-    end
-
-    context 'PR was reopened' do
-      let(:extractor_payload) do
-        {
-          scm: 'github',
-          action: 'reopened',
-          event: 'pull_request',
-          pr_number: 4,
-          target_repository_full_name: 'openSUSE/open-build-service'
-        }
-      end
-
-      before { allow(Project).to receive(:restore) }
-
-      it 'restores a project' do
-        subject.call
-        expect(Project).to have_received(:restore)
-      end
-    end
-
-    context 'PR was closed' do
-      let(:extractor_payload) do
-        {
-          scm: 'github',
-          action: 'closed',
-          event: 'pull_request',
-          pr_number: 4,
-          target_repository_full_name: 'openSUSE/open-build-service'
-        }
-      end
-      let!(:target_project) { create(:project, name: 'test-target-project:openSUSE:open-build-service:PR-4', maintainer: user) }
-      let!(:target_package) { create(:package, name: 'test-target-package', project: target_project) }
-
-      context 'we are dealing with a branch package step' do
-        before { login user }
-
-        it 'removes the target project' do
-          expect { subject.call }.to change(Project, :count).from(2).to(1)
-        end
-
-        it 'deletes event subscriptions' do
-          EventSubscription.create!(channel: 'scm', token: token, receiver_role: 'maintainer', eventtype: 'Event::BuildFail', package: target_package)
-          expect { subject.call }.to change(EventSubscription, :count).from(1).to(0)
-        end
-      end
-
-      context 'when we are dealing with a configure project step' do
-        let(:yaml) do
-          { 'steps' => [
-            {
-              'configure_repositories' => {
-                'project' => 'test-target-project'
-              }
-            }
-          ] }
-        end
-
-        before { login user }
-
-        it 'does not remove the target project' do
-          expect { subject.call }.not_to change(Project, :count)
-        end
-
-        it 'does not delete event subscriptions' do
-          EventSubscription.create!(channel: 'scm', token: token, receiver_role: 'maintainer', eventtype: 'Event::BuildFail', package: target_package)
-          expect { subject.call }.not_to change(EventSubscription, :count)
-        end
-      end
     end
 
     context 'with an unsupported event filter' do
@@ -232,10 +161,47 @@ RSpec.describe Workflow, vcr: true do
       end
     end
 
+    context 'with GitHub "pull_request" event matching the "merge_request" event filter alias' do
+      let(:yaml) do
+        { 'steps' => [{ 'branch_package' => { 'source_project' => 'test-project', 'source_package' => 'test-package' } }],
+          'filters' => { 'event' => 'merge_request' } }
+      end
+      let(:extractor_payload) do
+        {
+          scm: 'github',
+          action: 'opened',
+          event: 'pull_request'
+        }
+      end
+
+      before do
+        allow(subject.steps.first).to receive(:call)
+      end
+
+      context 'when no workflow version is provided' do
+        it 'the workflow runs' do
+          subject.call
+          expect(subject.steps.first).to have_received(:call)
+        end
+      end
+
+      context 'when a workflow version is provided that does not support the alias' do
+        subject do
+          described_class.new(workflow_instructions: yaml, scm_webhook: SCMWebhook.new(payload: extractor_payload),
+                              token: token, workflow_run: workflow_run, workflow_version_number: '1.0')
+        end
+
+        it 'the workflow does not run' do
+          subject.call
+          expect(subject.steps.first).not_to have_received(:call)
+        end
+      end
+    end
+
     context 'when the webhook event is against none of the branches in the branches/ignore filters' do
       let(:yaml) do
         { 'steps' => [{ 'branch_package' => { 'source_project' => 'test-project', 'source_package' => 'test-package' } }],
-          'filters' => { 'branches' => { 'ignore' => ['something', 'main'] } } }
+          'filters' => { 'branches' => { 'ignore' => %w[something main] } } }
       end
       let(:extractor_payload) do
         {
@@ -259,7 +225,7 @@ RSpec.describe Workflow, vcr: true do
     context 'when the webhook event is against none of the branches in the branches/only filters' do
       let(:yaml) do
         { 'steps' => [{ 'branch_package' => { 'source_project' => 'test-project', 'source_package' => 'test-package' } }],
-          'filters' => { 'branches' => { 'only' => ['something', 'main'] } } }
+          'filters' => { 'branches' => { 'only' => %w[something main] } } }
       end
       let(:extractor_payload) do
         {
@@ -283,7 +249,7 @@ RSpec.describe Workflow, vcr: true do
     context 'when the webhook event is against one of the branches in the branches/ignore filters' do
       let(:yaml) do
         { 'steps' => [{ 'branch_package' => { 'source_project' => 'test-project', 'source_package' => 'test-package' } }],
-          'filters' => { 'branches' => { 'ignore' => ['something', 'main'] } } }
+          'filters' => { 'branches' => { 'ignore' => %w[something main] } } }
       end
       let(:extractor_payload) do
         {
@@ -307,7 +273,7 @@ RSpec.describe Workflow, vcr: true do
     context 'when the webhook event is against one of the branches in the branches/only filters' do
       let(:yaml) do
         { 'steps' => [{ 'branch_package' => { 'source_project' => 'test-project', 'source_package' => 'test-package' } }],
-          'filters' => { 'branches' => { 'only' => ['master', 'develop'] } } }
+          'filters' => { 'branches' => { 'only' => %w[master develop] } } }
       end
       let(:extractor_payload) do
         {
@@ -326,6 +292,28 @@ RSpec.describe Workflow, vcr: true do
       it 'the workflow runs' do
         subject.call
         expect(subject.steps.first).to have_received(:call)
+      end
+    end
+
+    context 'when the webhook event is not supported by the branches filter' do
+      let(:yaml) do
+        { 'steps' => [{ 'trigger_services' => { 'project' => 'test-project', 'package' => 'test-package' } }],
+          'filters' => { 'branches' => { 'only' => ['develop'] } } }
+      end
+
+      let(:extractor_payload) do
+        {
+          scm: 'gitlab',
+          event: 'Tag Push Hook',
+          ref: 'refs/tags/release_abc',
+          target_branch: '9e0ea1fd99c9000cbb8b8c9d28763d0ddace0b65'
+        }
+      end
+
+      it 'is not valid and has an error message' do
+        subject.valid?(:call)
+        expect(subject.errors.full_messages.to_sentence).to eq('Filters for branches are not supported for the tag push event. ' \
+                                                               "Documentation for filters: #{WorkflowFiltersValidator::DOCUMENTATION_LINK}")
       end
     end
   end
@@ -372,11 +360,6 @@ RSpec.describe Workflow, vcr: true do
 
       it 'returns an array with two items' do
         expect(subject.steps.count).to be 2
-      end
-
-      # This example requires VCR
-      it 'creates no artifacts because an exception is raised' do
-        expect { subject.call }.to raise_error BranchPackage::Errors::DoubleBranchPackageError
       end
     end
 
@@ -452,14 +435,14 @@ RSpec.describe Workflow, vcr: true do
         {
           'filters' => {
             'event' => 'push',
-            'branches' => { 'only' => ['master', 'staging'] }
+            'branches' => { 'only' => %w[master staging] }
           }
         }
       end
 
       it 'returns filters' do
         expect(subject.filters).to eq({ event: 'push',
-                                        branches: { only: ['master', 'staging'] } })
+                                        branches: { only: %w[master staging] } })
       end
     end
 

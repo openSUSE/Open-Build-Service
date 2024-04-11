@@ -1,6 +1,4 @@
-require 'rails_helper'
-
-RSpec.describe IssueTracker::CVEParser, vcr: true do
+RSpec.describe IssueTracker::CVEParser, :vcr do
   let(:issue_tracker) { create(:issue_tracker) }
   let(:cve_parser) { IssueTracker::CVEParser.new }
 
@@ -18,19 +16,19 @@ RSpec.describe IssueTracker::CVEParser, vcr: true do
       cve_parser.set_tracker(issue_tracker)
     end
 
-    it { expect(cve_parser.start_element('item', [['name', 'CVE-2010-31337']])).to be_falsey }
+    it { expect(cve_parser.start_element('item', [%w[name CVE-2010-31337]])).to be_falsey }
   end
 
   describe '#cve' do
-    it { expect(cve_parser.cve([['name', 'CVE-2010-31337']])).not_to be_nil }
-    it { expect(cve_parser.cve([['xxxx', 'CVE-2010-31337']])).to be_nil }
+    it { expect(cve_parser.cve([%w[name CVE-2010-31337]])).not_to be_nil }
+    it { expect(cve_parser.cve([%w[xxxx CVE-2010-31337]])).to be_nil }
   end
 
   describe '#my_issue_and_desc_name' do
     before do
       allow(IssueTracker).to receive(:find_by).and_return(issue_tracker)
       cve_parser.set_tracker(issue_tracker)
-      cve_parser.start_element('item', [['name', 'CVE-2010-31337']])
+      cve_parser.start_element('item', [%w[name CVE-2010-31337]])
     end
 
     it { expect(cve_parser.my_issue_and_desc_name('desc')).to be_truthy }

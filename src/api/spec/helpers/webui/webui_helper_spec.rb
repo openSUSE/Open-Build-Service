@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe Webui::WebuiHelper do
   let(:input) { 'Rocking the Open Build Service' }
 
@@ -64,9 +62,8 @@ RSpec.describe Webui::WebuiHelper do
   end
 
   describe '#bugzilla_url' do
-    before do
-      @configuration = { 'bugzilla_url' => 'https://bugzilla.example.org' }
-      @expected_attributes = {
+    let(:expected_attributes) do
+      {
         classification: 7340,
         product: 'openSUSE.org',
         component: '3rd%20party%20software',
@@ -74,20 +71,21 @@ RSpec.describe Webui::WebuiHelper do
         short_desc: ''
       }
     end
+    let(:expected_attributes_as_params) { expected_attributes.map { |key, value| "#{key}=#{value}" }.join('&') }
+    let(:expected_url) { "https://bugzilla.example.org/enter_bug.cgi?#{expected_attributes_as_params}" }
+
+    before do
+      @configuration = { 'bugzilla_url' => 'https://bugzilla.example.org' }
+    end
 
     it 'returns link to a prefilled bugzilla enter bug form' do
-      expected_url = 'https://bugzilla.example.org/enter_bug.cgi?' +
-                     @expected_attributes.map { |key, value| "#{key}=#{value}" }.join('&')
       expect(bugzilla_url).to eq(expected_url)
     end
 
     it 'adds an assignee and description if parameters where given' do
-      expected_attributes = @expected_attributes.clone
       expected_attributes[:short_desc] = 'some_description'
       expected_attributes[:assigned_to] = 'assignee@example.org'
 
-      expected_url = 'https://bugzilla.example.org/enter_bug.cgi?' +
-                     expected_attributes.map { |key, value| "#{key}=#{value}" }.join('&')
       expect(bugzilla_url(['assignee@example.org'], 'some_description')).to eq(expected_url)
     end
   end
@@ -200,9 +198,9 @@ RSpec.describe Webui::WebuiHelper do
   end
 
   describe '#pick_max_problems' do
-    let(:max_shown) { 5 }
-
     subject { pick_max_problems(checks, builds, max_shown) }
+
+    let(:max_shown) { 5 }
 
     context 'with no failed checks' do
       let(:checks) { [] }

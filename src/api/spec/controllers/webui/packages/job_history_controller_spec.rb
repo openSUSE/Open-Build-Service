@@ -1,11 +1,6 @@
-require 'rails_helper'
 require 'webmock/rspec'
-# WARNING: If you change owner tests make sure you uncomment this line
-# and start a test backend. Some of the Owner methods
-# require real backend answers for projects/packages.
-# CONFIG['global_write_through'] = true
 
-RSpec.describe Webui::Packages::JobHistoryController, vcr: true do
+RSpec.describe Webui::Packages::JobHistoryController, :vcr do
   describe 'GET #index' do
     let(:user) { create(:confirmed_user, :with_home, login: 'tom') }
     let(:source_project) { user.home_project }
@@ -22,7 +17,7 @@ RSpec.describe Webui::Packages::JobHistoryController, vcr: true do
       end
 
       it { expect(flash[:error]).not_to be_empty }
-      it { expect(response).to redirect_to(package_binaries_path(package: package, project: source_project, repository: 'fake_repo')) }
+      it { expect(response).to redirect_to(project_package_repository_binaries_path(package_name: package, project_name: source_project, repository_name: 'fake_repo')) }
     end
 
     context 'without a valid architecture' do
@@ -34,8 +29,9 @@ RSpec.describe Webui::Packages::JobHistoryController, vcr: true do
       it { expect(flash[:error]).not_to be_empty }
 
       it 'redirects to package_binaries_path' do
-        expect(response).to redirect_to(package_binaries_path(package: package,
-                                                              project: source_project, repository: repo_for_source_project.name))
+        expect(response).to redirect_to(project_package_repository_binaries_path(package_name: package,
+                                                                                 project_name: source_project,
+                                                                                 repository_name: repo_for_source_project.name))
       end
     end
 

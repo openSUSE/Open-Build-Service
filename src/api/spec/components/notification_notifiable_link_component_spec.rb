@@ -1,6 +1,6 @@
-require 'rails_helper'
-
 RSpec.describe NotificationNotifiableLinkComponent, type: :component do
+  let(:current_user) { create(:user) }
+
   context 'for a BsRequest notification with multiple actions' do
     let(:bs_request) { create(:bs_request_with_submit_action, number: 456_345) }
     let(:notification) { create(:notification, :request_state_change, notifiable: bs_request) }
@@ -9,7 +9,7 @@ RSpec.describe NotificationNotifiableLinkComponent, type: :component do
       # Extra BsRequestAction
       bs_request.bs_request_actions << create(:bs_request_action_add_maintainer_role)
 
-      render_inline(described_class.new(notification))
+      render_inline(described_class.new(notification, current_user))
     end
 
     it 'renders a link to the BsRequest with a generic text and its number' do
@@ -22,7 +22,7 @@ RSpec.describe NotificationNotifiableLinkComponent, type: :component do
     let(:notification) { create(:notification, :request_state_change, notifiable: bs_request) }
 
     before do
-      render_inline(described_class.new(notification))
+      render_inline(described_class.new(notification, current_user))
     end
 
     it 'renders a link to the BsRequest with the text containing its action and number' do
@@ -35,7 +35,7 @@ RSpec.describe NotificationNotifiableLinkComponent, type: :component do
     let(:notification) { create(:notification, :request_created, notifiable: bs_request) }
 
     before do
-      render_inline(described_class.new(notification))
+      render_inline(described_class.new(notification, current_user))
     end
 
     it 'renders a link to the BsRequest with the text containing its action and number' do
@@ -48,7 +48,7 @@ RSpec.describe NotificationNotifiableLinkComponent, type: :component do
     let(:notification) { create(:notification, :review_wanted, notifiable: bs_request) }
 
     before do
-      render_inline(described_class.new(notification))
+      render_inline(described_class.new(notification, current_user))
     end
 
     it 'renders a link to the BsRequest with the text containing its action and number' do
@@ -62,7 +62,7 @@ RSpec.describe NotificationNotifiableLinkComponent, type: :component do
     let(:notification) { create(:notification, :comment_for_request, notifiable: comment) }
 
     before do
-      render_inline(described_class.new(notification))
+      render_inline(described_class.new(notification, current_user))
     end
 
     it "renders a link to the comment's BsRequest with the text containing its action and number" do
@@ -76,7 +76,7 @@ RSpec.describe NotificationNotifiableLinkComponent, type: :component do
     let(:notification) { create(:notification, :comment_for_project, notifiable: comment) }
 
     before do
-      render_inline(described_class.new(notification))
+      render_inline(described_class.new(notification, current_user))
     end
 
     it "renders a link to the comment's project" do
@@ -91,11 +91,51 @@ RSpec.describe NotificationNotifiableLinkComponent, type: :component do
     let(:notification) { create(:notification, :comment_for_package, notifiable: comment) }
 
     before do
-      render_inline(described_class.new(notification))
+      render_inline(described_class.new(notification, current_user))
     end
 
     it "renders a link to the comment's package" do
       expect(rendered_content).to have_link('Comment on Package', href: "/package/show/projet_de_societe/oui?notification_id=#{notification.id}#comments-list")
+    end
+  end
+
+  context 'for a report notification with the event Event::CreateReport' do
+    let(:notification) { create(:notification, :create_report) }
+    let(:project) { notification.notifiable.reportable.commentable.project }
+    let(:package) { notification.notifiable.reportable.commentable }
+
+    before do
+      render_inline(described_class.new(notification, current_user))
+    end
+
+    it 'renders a link to the reported content' do
+      expect(rendered_content).to have_link('Report for a Comment', href: "/package/show/#{project.name}/#{package.name}?notification_id=#{notification.id}#comments-list")
+    end
+  end
+
+  context 'for a decision notification with the event Event::ClearedDecision' do
+    let(:notification) { create(:notification, :cleared_decision) }
+    let(:package) { notification.notifiable.reports.first.reportable.commentable }
+
+    before do
+      render_inline(described_class.new(notification, current_user))
+    end
+
+    it 'renders a link to the reportable' do
+      expect(rendered_content).to have_link('Cleared Comment Report', href: "/package/show/#{package.project.name}/#{package.name}?notification_id=#{notification.id}#comments-list")
+    end
+  end
+
+  context 'for a decision notification with the event Event::FavoredDecision' do
+    let(:notification) { create(:notification, :favored_decision) }
+    let(:package) { notification.notifiable.reports.first.reportable.commentable }
+
+    before do
+      render_inline(described_class.new(notification, current_user))
+    end
+
+    it 'renders a link to the reportable' do
+      expect(rendered_content).to have_link('Favored Comment Report', href: "/package/show/#{package.project.name}/#{package.name}?notification_id=#{notification.id}#comments-list")
     end
   end
 end

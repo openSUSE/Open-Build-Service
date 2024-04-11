@@ -32,6 +32,9 @@ namespace :dev do
         source_package: source_package_a
       )
 
+      target_package_b = Package.where(name: 'package_b', project: target_project).first ||
+                         create(:package, name: 'package_b', project: target_project)
+
       # Create more actions to submit new files from different packages to package_b
       ('b'..'z').each_with_index do |char, index|
         figure = (index + 1).to_s.rjust(2, '0') # Generate the last two figures for the issue code
@@ -39,9 +42,6 @@ namespace :dev do
 
         source_package = Package.where(name: "package_#{char}", project: source_project).first ||
                          create(:package_with_files, name: "package_#{char}", project: source_project, changes_file_content: changes_file_content)
-
-        target_package_b = Package.where(name: 'package_b', project: target_project).first ||
-                           create(:package, name: 'package_b', project: target_project)
 
         action_attributes = {
           source_package: source_package,
@@ -65,6 +65,28 @@ namespace :dev do
       bs_req_action = build(:bs_request_action, action_attributes)
       bs_req_action.save! if bs_req_action.valid?
 
+      # Create an action to set a user as bugowner
+      action_attributes = {
+        target_project: target_project,
+        target_package: target_package_b,
+        person_name: 'user_1',
+        type: 'set_bugowner',
+        bs_request: request
+      }
+      bs_req_action = build(:bs_request_action, action_attributes)
+      bs_req_action.save! if bs_req_action.valid?
+
+      # Create an action to set a group as bugowner
+      action_attributes = {
+        target_project: target_project,
+        target_package: target_package_a,
+        group_name: 'group_1',
+        type: 'set_bugowner',
+        bs_request: request
+      }
+      bs_req_action = build(:bs_request_action, action_attributes)
+      bs_req_action.save! if bs_req_action.valid?
+
       create(:bs_request_action_delete,
              target_project: target_project,
              bs_request: request)
@@ -82,7 +104,7 @@ namespace :dev do
 
       # Current devel package
       servers_project = Project.find_by(name: 'servers') || create(:project, name: 'servers')
-      apache2_servers = Package.find_by_project_and_name(servers_project.name, 'apache2') || create(:package, project: servers_project, name: 'apache2')
+      apache2_servers = Package.find_by_project_and_name(servers_project.name, 'apache2') || create(:package_with_file, project: servers_project, name: 'apache2')
 
       # Future devel package (source)
       # source_project -> home:Admin:branches:openSUSE:Factory
@@ -162,45 +184,6 @@ namespace :dev do
       puts "  - Create a couple of repositories in project #{iggy_home_project.name}"
     end
 
-    desc 'Creates a request with maintenance incident actions'
-    task request_with_maintenance_incident_actions: :development_environment do
-      require 'factory_bot'
-      include FactoryBot::Syntax::Methods
-
-      iggy = User.find_by(login: 'Iggy') || create(:staff_user, login: 'Iggy')
-      User.session = iggy
-
-      request = build(
-        :bs_request_with_maintenance_incident_action,
-        creator: iggy
-      )
-
-      maintenance_project = Project.find_by(kind: 'maintenance')
-      release_project = Project.find_by(kind: 'maintenance_release')
-
-      # This is the first maintenance incident action, we reuse the action created by the factory
-      home_iggy_project = RakeSupport.find_or_create_project(iggy.home_project_name, iggy)
-      maintenance_package = create(:package, name: "maintenance_package_#{Faker::Lorem.word}", project: home_iggy_project)
-      request.bs_request_actions.first.tap do |action|
-        action.source_project = home_iggy_project
-        action.source_package = maintenance_package
-        action.target_project = maintenance_project
-        action.target_releaseproject = release_project
-        action.save!
-      end
-
-      # This is the second maintenance incident action
-      another_maintenance_package = create(:package, name: "another_maintenance_package_#{Faker::Lorem.word}", project: home_iggy_project)
-      request.bs_request_actions << create(:bs_request_action,
-                                           type: :maintenance_incident,
-                                           source_project: home_iggy_project,
-                                           source_package: another_maintenance_package,
-                                           target_project: maintenance_project,
-                                           target_releaseproject: release_project)
-
-      puts "* Request with maintenance incident actions #{request.number} has been created."
-    end
-
     # Run this task with: rails dev:requests:request_with_delete_action
     desc 'Creates a request with a delete action'
     task request_with_delete_action: :development_environment do
@@ -211,7 +194,7 @@ namespace :dev do
       admin = User.get_default_admin
       home_admin_project = RakeSupport.find_or_create_project(admin.home_project_name, admin)
 
-      target_package = create(:package, project: home_admin_project, name: Faker::Lorem.word)
+      target_package = create(:package, project: home_admin_project, name: "#{Faker::Lorem.word}_#{Time.now.to_i}")
       request = create(:delete_bs_request, target_package: target_package, creator: iggy)
 
       puts "* Request with delete action #{request.number} has been created."

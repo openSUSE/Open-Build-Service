@@ -1,11 +1,9 @@
-require 'rails_helper'
-
 RSpec.describe Workflows::ArtifactsCollector, type: :service do
+  subject { described_class.new(workflow_run_id: workflow_run.id, step: step) }
+
   let(:user) { create(:confirmed_user) }
   let(:token) { create(:workflow_token, executor: user) }
   let(:workflow_run) { create(:workflow_run, token: token) }
-
-  subject { described_class.new(workflow_run_id: workflow_run.id, step: step) }
 
   describe '#call' do
     context 'for a branch_package step' do
@@ -322,9 +320,9 @@ RSpec.describe Workflows::ArtifactsCollector, type: :service do
                     target_repository: 'snapshot'
                   }
                 ],
-                architectures: [
-                  'x86_64',
-                  'ppc'
+                architectures: %w[
+                  x86_64
+                  ppc
                 ]
               },
               {
@@ -366,6 +364,41 @@ RSpec.describe Workflows::ArtifactsCollector, type: :service do
         subject.call
         expect(WorkflowArtifactsPerStep.last.artifacts).to eq(artifacts.to_json)
         expect(WorkflowArtifactsPerStep.last.step).to eq('Workflow::Step::ConfigureRepositories')
+      end
+    end
+
+    context 'for set_flag step' do
+      let(:step) { Workflow::Step::SetFlags.new(step_instructions: step_instructions, scm_webhook: scm_webhook, token: token) }
+      let(:step_instructions) do
+        {
+          flags: [
+            { type: 'build', status: 'enable', project: 'home:Admin' }
+          ]
+        }
+      end
+      let(:scm_webhook) do
+        SCMWebhook.new(payload: {
+                         scm: 'github',
+                         event: 'pull_request',
+                         pr_number: 1,
+                         target_branch: 'master',
+                         action: 'opened',
+                         source_repository_full_name: 'iggy/hello_world',
+                         target_repository_full_name: 'iggy/hello_world'
+                       })
+      end
+      let(:artifacts) do
+        {
+          flags: step_instructions[:flags]
+        }
+      end
+
+      it { expect { subject.call }.to change(WorkflowArtifactsPerStep, :count).by(1) }
+
+      it do
+        subject.call
+        expect(WorkflowArtifactsPerStep.last.artifacts).to eq(artifacts.to_json)
+        expect(WorkflowArtifactsPerStep.last.step).to eq('Workflow::Step::SetFlags')
       end
     end
   end

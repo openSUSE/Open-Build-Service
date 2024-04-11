@@ -1,8 +1,8 @@
 require 'browser_helper'
 require 'webmock/rspec'
-require 'code_mirror_helper'
+require 'support/code_mirror'
 
-RSpec.describe 'Packages', js: true, vcr: true do
+RSpec.describe 'Packages', :js, :vcr do
   it_behaves_like 'bootstrap user tab' do
     let(:package) do
       create(:package, name: 'group_test_package',
@@ -20,7 +20,7 @@ RSpec.describe 'Packages', js: true, vcr: true do
   let(:third_project) { create(:project_with_package, package_name: 'develpackage') }
 
   describe 'Viewing a package that' do
-    let(:branching_data) { BranchPackage.new(project: user.home_project.name, package: package.name).branch }
+    let(:branching_data) { create(:branch_package, project: user.home_project.name, package: package.name) }
     let(:branched_project) { Project.where(name: branching_data[:data][:targetproject]).first }
     let(:package_mime) do
       create(:package, name: 'test.json', project: user.home_project, description: 'A package with a mime type suffix')
@@ -127,10 +127,10 @@ RSpec.describe 'Packages', js: true, vcr: true do
 
     it 'via binaries view' do
       allow(Buildresult).to receive(:find_hashed)
-        .with(project: user.home_project.name, package: package.name, repository: repository.name, view: ['binarylist', 'status'])
+        .with(project: user.home_project.name, package: package.name, repository: repository.name, view: %w[binarylist status])
         .and_return(Xmlhash.parse(fake_buildresult))
 
-      visit package_binaries_path(project: user.home_project, package: package, repository: repository.name)
+      visit project_package_repository_binaries_path(project_name: user.home_project, package_name: package, repository_name: repository.name)
       click_link('Trigger')
       expect(a_request(:post, rebuild_url)).to have_been_made.once
     end
@@ -150,7 +150,7 @@ RSpec.describe 'Packages', js: true, vcr: true do
                             </resultlist>
                             )
       result_path = "#{CONFIG['source_url']}/build/#{user.home_project}/_result?"
-      stub_request(:get, result_path + 'view=status&package=test_package&multibuild=1&locallink=1&lastbuild=0')
+      stub_request(:get, "#{result_path}view=status&package=test_package&multibuild=1&locallink=1&lastbuild=0")
         .and_return(body: result)
       stub_request(:get, result_path + "arch=i586&package=#{package}&repository=#{repository.name}&view=status")
         .and_return(body: result)
@@ -207,7 +207,7 @@ RSpec.describe 'Packages', js: true, vcr: true do
     expect(page).to have_text("Error while creating inv/alid files: 'inv/alid' is not a valid filename.")
 
     click_link(package.name)
-    expect(page).not_to have_link('inv/alid')
+    expect(page).to have_no_link('inv/alid')
   end
 
   describe 'branching a package from another users project' do
@@ -284,14 +284,14 @@ RSpec.describe 'Packages', js: true, vcr: true do
       wait_for_ajax
 
       within('#edit_package_details') do
-        fill_in('package_details[title]', with: 'test title')
+        fill_in('package_details[title]', with: 'test "little" title')
         fill_in('package_details[description]', with: 'test description')
         fill_in('package_details[url]', with: 'https://test.url')
         click_button('Update')
       end
 
       expect(find_by_id('flash')).to have_text('Package was successfully updated.')
-      expect(page).to have_text('test title')
+      expect(page).to have_text('test "little" title')
       expect(page).to have_text('test description')
       expect(page).to have_text('https://test.url')
     end
@@ -324,7 +324,7 @@ RSpec.describe 'Packages', js: true, vcr: true do
       it 'can not edit' do
         visit package_meta_path(package.project, package)
         within('.card-body') do
-          expect(page).not_to have_css('.toolbar')
+          expect(page).to have_no_css('.toolbar')
         end
       end
     end
@@ -356,8 +356,8 @@ RSpec.describe 'Packages', js: true, vcr: true do
 
         expect(page).to have_text("Package 'coolstuff' was created successfully")
         expect(page).to have_current_path(package_show_path(project: user.home_project_name, package: 'coolstuff'))
-        expect(find(:css, '#package-title')).to have_text('cool stuff everyone needs')
-        expect(find(:css, '#description-text')).to have_text(very_long_description)
+        expect(find_by_id('package-title')).to have_text('cool stuff everyone needs')
+        expect(find_by_id('description-text')).to have_text(very_long_description)
       end
     end
 
@@ -382,6 +382,28 @@ RSpec.describe 'Packages', js: true, vcr: true do
         expect(page).to have_text("Package 'coolstuff' was created successfully")
         expect(page).to have_current_path(package_show_path(project: global_project.to_s, package: 'coolstuff'), ignore_query: true)
       end
+    end
+  end
+
+  describe 'Viewing package with older revision' do
+    let(:revision_package) { create(:package_with_file, name: 'revision_test_package', project: user.home_project) }
+    let(:revision) { revision_package.rev.to_i - 1 }
+    let(:hashed_revision) { revision_package.dir_hash(rev: revision) }
+    let(:srcmd5) { hashed_revision['srcmd5'] }
+    let(:file_in_revision) { hashed_revision.elements('entry')[0]['name'] }
+
+    before do
+      login(user)
+      revision_package.save_file(filename: 'revision_file', file: 'new content')
+      visit package_show_path(project: user.home_project, package: revision_package, rev: revision)
+    end
+
+    it 'contains file from revision including the revision parameter' do
+      expect(page).to have_link(file_in_revision, href: project_package_file_path(revision_package.project, revision_package, file_in_revision, rev: srcmd5, expand: 1))
+    end
+
+    it 'does not display delete buttons for files' do
+      expect(page).to have_no_css('a[title="Delete file"]')
     end
   end
 end

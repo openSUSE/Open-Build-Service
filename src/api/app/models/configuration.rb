@@ -3,67 +3,26 @@ class Configuration < ApplicationRecord
   after_save :delayed_write_to_backend
 
   include CanRenderModel
+  include ConfigurationConstants
 
   validates :name, :title, :description, presence: true
-
-  # note: do not add defaults here. It must be either the options.yml content or nil
-  # rubocop:disable Style/MutableConstant
-  # FIXME: The hash keys are outputted in the error message of the PUT endpoint in the configurations_controller.
-  #        To remove the confusion, the hash keys should have the same name as the config options from which they take their value.
-  OPTIONS_YML = {
-    title: nil,
-    description: nil,
-    name: nil, # from BSConfig.pm
-    download_on_demand: nil, # from BSConfig.pm
-    enforce_project_keys: nil, # from BSConfig.pm
-    anonymous: CONFIG['allow_anonymous'],
-    registration: CONFIG['new_user_registration'],
-    default_access_disabled: CONFIG['default_access_disabled'],
-    allow_user_to_create_home_project: CONFIG['allow_user_to_create_home_project'],
-    disallow_group_creation: CONFIG['disallow_group_creation_with_api'],
-    change_password: CONFIG['change_passwd'],
-    obs_url: nil, # inital setup may happen in webui api controller
-    api_url: nil,
-    hide_private_options: CONFIG['hide_private_options'],
-    gravatar: CONFIG['use_gravatar'],
-    download_url: CONFIG['download_url'],
-    ymp_url: CONFIG['ymp_url'],
-    bugzilla_url: CONFIG['bugzilla_host'],
-    http_proxy: CONFIG['http_proxy'],
-    no_proxy: nil,
-    cleanup_after_days: nil,
-    theme: CONFIG['theme'],
-    cleanup_empty_projects: nil,
-    disable_publish_for_branches: nil,
-    admin_email: nil,
-    unlisted_projects_filter: nil,
-    unlisted_projects_filter_description: nil,
-    tos_url: nil
-  }
-  # rubocop:enable Style/MutableConstant
-
-  ON_OFF_OPTIONS = [:anonymous, :default_access_disabled,
-                    :allow_user_to_create_home_project, :disallow_group_creation,
-                    :change_password, :hide_private_options, :gravatar,
-                    :download_on_demand, :enforce_project_keys,
-                    :cleanup_empty_projects, :disable_publish_for_branches].freeze
+  validates :admin_email, :api_url, :bugzilla_url, :default_tracker, :download_url, :http_proxy, :name, :no_proxy, :obs_url, :theme, :title, :tos_url, :unlisted_projects_filter,
+            :unlisted_projects_filter_description, :ymp_url, length: { maximum: 255 }
+  validates :description, :code_of_conduct, length: { maximum: 65_535 }
 
   class << self
     def map_value(key, value)
-      if key.in?(ON_OFF_OPTIONS)
-        # make them boolean
-        return value.in?([:on, ':on', 'on', 'true', true])
-      end
+      # make them boolean
+      return value.in?([:on, ':on', 'on', 'true', true]) if key.in?(::Configuration::ON_OFF_OPTIONS)
 
       value
     end
 
     # Simple singleton implementation: Try to respond with the
     # the data from the first instance
-    def method_missing(method_name, *args, &block)
-      Configuration.create(name: 'private', title: 'Open Build Service', description: 'Private OBS Instance') unless first
-      if first.respond_to?(method_name)
-        first.send(method_name, *args, &block)
+    def method_missing(method_name, ...)
+      if Configuration.new.methods.include?(method_name)
+        first.send(method_name, ...)
       else
         super
       end
@@ -85,17 +44,30 @@ class Configuration < ApplicationRecord
     CONFIG['ldap_mode'] == :on
   end
 
+  def proxy_auth_mode_enabled?
+    logger.info 'Warning: You are using the deprecated ichain_mode setting in config/options.yml' if CONFIG['ichain_mode'].present?
+
+    return false unless PROXY_MODE_ENABLED_VALUES.include?(CONFIG['proxy_auth_mode']) || CONFIG['ichain_mode'] == :on
+
+    unless CONFIG['proxy_auth_login_page'].present? && CONFIG['proxy_auth_logout_page'].present?
+      logger.info 'Warning: You enabled proxy_auth_mode in config/options.yml but did not set the required proxy_auth_login_page/proxy_auth_logout_page options'
+      return false
+    end
+
+    true
+  end
+
   def amqp_namespace
     CONFIG['amqp_namespace'] || 'opensuse.obs'
   end
 
   def passwords_changable?(user = nil)
-    change_password && CONFIG['proxy_auth_mode'] != :on && (user.try(:ignore_auth_services?) || CONFIG['ldap_mode'] != :on)
+    change_password && !proxy_auth_mode_enabled? && (user.try(:ignore_auth_services?) || CONFIG['ldap_mode'] != :on)
   end
 
   def accounts_editable?(user = nil)
     (
-      CONFIG['proxy_auth_mode'] != :on || CONFIG['proxy_auth_account_page'].present?
+      !proxy_auth_mode_enabled? || CONFIG['proxy_auth_account_page'].present?
     ) && (
       user.try(:ignore_auth_services?) || CONFIG['ldap_mode'] != :on
     )
@@ -115,7 +87,8 @@ class Configuration < ApplicationRecord
 
     # special for api_url
     unless CONFIG['frontend_host'].blank? || CONFIG['frontend_port'].blank? || CONFIG['frontend_protocol'].blank?
-      attribs['api_url'] = "#{CONFIG['frontend_protocol']}://#{CONFIG['frontend_host']}:#{CONFIG['frontend_port']}"
+      attribs['api_url'] =
+        "#{CONFIG['frontend_protocol']}://#{CONFIG['frontend_host']}:#{CONFIG['frontend_port']}"
     end
     update(attribs)
     save!
@@ -150,6 +123,7 @@ end
 #  change_password                      :boolean          default(TRUE)
 #  cleanup_after_days                   :integer
 #  cleanup_empty_projects               :boolean          default(TRUE)
+#  code_of_conduct                      :text(65535)
 #  default_access_disabled              :boolean          default(FALSE)
 #  default_tracker                      :string(255)      default("bnc")
 #  description                          :text(65535)

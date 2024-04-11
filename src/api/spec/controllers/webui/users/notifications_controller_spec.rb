@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe Webui::Users::NotificationsController do
   let(:username) { 'reynoldsm' }
   let!(:user) { create(:confirmed_user, login: username) }
@@ -16,18 +14,18 @@ RSpec.describe Webui::Users::NotificationsController do
 
   shared_examples 'returning success' do
     it 'returns ok status' do
-      expect(response.status).to be 200
+      expect(response).to have_http_status(:ok)
     end
   end
 
   describe 'GET #index' do
-    let(:user_to_log_in) { user }
-    let(:default_params) { { user_login: username } }
-
     subject do
       login user_to_log_in
       get :index, params: params
     end
+
+    let(:user_to_log_in) { user }
+    let(:default_params) { { user_login: username } }
 
     context 'when no param type is provided' do
       let(:params) { default_params }

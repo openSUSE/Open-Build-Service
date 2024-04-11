@@ -1,14 +1,12 @@
-require 'rails_helper'
-
 RSpec.describe EventSubscription::ForEventForm do
   include_context 'a user and subscriptions'
 
   let(:subscriber) { user }
 
   describe '#call' do
-    let(:roles) { subject.roles }
-
     subject { EventSubscription::ForEventForm.new(event_class, subscriber).call }
+
+    let(:roles) { subject.roles }
 
     context 'for Event::CommentForProject' do
       let(:event_class) { Event::CommentForProject }

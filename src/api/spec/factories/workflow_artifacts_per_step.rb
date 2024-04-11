@@ -1,6 +1,6 @@
 FactoryBot.define do
   factory :workflow_artifacts_per_step, aliases: [:workflow_artifacts_per_step_branch_package] do
-    workflow_run { create(:workflow_run) }
+    workflow_run
     step { 'Workflow::Step::BranchPackageStep' }
 
     transient do
@@ -65,6 +65,21 @@ FactoryBot.define do
               ],
               architectures: ['x86_64']
             }
+          ]
+        }.to_json
+      end
+    end
+    factory :workflow_artifacts_per_step_set_flags do
+      step { 'Workflow::Step::SetFlags' }
+      before(:create) do |workflow_artifacts_per_step, evaluator|
+        workflow_artifacts_per_step.artifacts = {
+          flags: [
+            type: 'build',
+            status: 'enable',
+            project: evaluator.source_project_name,
+            package: evaluator.source_package_name,
+            repository: 'openSUSE_Tumbleweed',
+            architecture: 'x86_64'
           ]
         }.to_json
       end

@@ -144,7 +144,9 @@ sub pack_enumerated {
 
 sub pack_obj_id {
   my ($o1, $o2, @o) = @_;
-  return pack_raw($OBJ_ID, pack('w*', $o1 * 40 + $o2, @o));
+  my $data = pack('w*', $o1 * 40 + $o2, @o);
+  return pack("CC", $OBJ_ID, length($data)).$data if length($data) < 128;
+  return pack_raw($OBJ_ID, $data);
 }
 
 sub pack_sequence {
@@ -169,8 +171,11 @@ sub pack_octet_string {
 
 sub pack_string {
   my ($s, $tag) = @_;
+  $tag ||= $UTF8STRING;
+  return pack_raw($BMPSTRING, Encode::encode('UCS-2BE', $s)) if $tag == $BMPSTRING;
+  return pack_raw($UNIVERSALSTRING, Encode::encode('UCS-4BE', $s)) if $tag == $UNIVERSALSTRING;
   Encode::_utf8_off($s);	# hope for the best
-  return pack_raw($tag || $UTF8STRING, $s);
+  return pack_raw($tag, $s);
 }
 
 sub pack_bytes {

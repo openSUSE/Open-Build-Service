@@ -25,48 +25,80 @@ FactoryBot.define do
 
     trait :request_state_change do
       event_type { 'Event::RequestStatechange' }
-      association :notifiable, factory: :bs_request_with_submit_action
+      notifiable factory: [:bs_request_with_submit_action]
       bs_request_oldstate { :new }
     end
 
     trait :request_created do
       event_type { 'Event::RequestCreate' }
-      association :notifiable, factory: :bs_request_with_submit_action
+      notifiable factory: [:bs_request_with_submit_action]
     end
 
     trait :review_wanted do
       event_type { 'Event::ReviewWanted' }
-      association :notifiable, factory: :bs_request_with_submit_action
+      notifiable factory: [:bs_request_with_submit_action]
     end
 
     trait :comment_for_project do
       event_type { 'Event::CommentForProject' }
-      association :notifiable, factory: :comment_project
+      notifiable factory: [:comment_project]
     end
 
     trait :comment_for_package do
       event_type { 'Event::CommentForPackage' }
-      association :notifiable, factory: :comment_package
+      notifiable factory: [:comment_package]
     end
 
     trait :comment_for_request do
       event_type { 'Event::CommentForRequest' }
-      association :notifiable, factory: :comment_request
+      notifiable factory: [:comment_request]
     end
 
     trait :relationship_create_for_project do
       event_type { 'Event::RelationshipCreate' }
-      association :notifiable, factory: :project
+      notifiable factory: [:project]
     end
 
     trait :relationship_delete_for_project do
       event_type { 'Event::RelationshipDelete' }
-      association :notifiable, factory: :project
+      notifiable factory: [:project]
     end
 
     trait :build_failure do
       event_type { 'Event::BuildFail' }
-      association :notifiable, factory: :package
+      notifiable factory: [:package]
+    end
+
+    trait :create_report do
+      event_type { 'Event::CreateReport' }
+      notifiable factory: [:report]
+
+      transient do
+        reason { nil }
+      end
+
+      after(:build) do |notification, evaluator|
+        notification.event_payload['reportable_type'] ||= notification.notifiable.reportable.class.to_s
+        notification.event_payload['reason'] ||= evaluator.reason
+      end
+    end
+
+    trait :cleared_decision do
+      event_type { 'Event::ClearedDecision' }
+      notifiable { association(:decision, :cleared) }
+
+      after(:build) do |notification|
+        notification.event_payload['reportable_type'] ||= notification.notifiable.reports.first.reportable.class.to_s
+      end
+    end
+
+    trait :favored_decision do
+      event_type { 'Event::FavoredDecision' }
+      notifiable { association(:decision, :favor) }
+
+      after(:build) do |notification|
+        notification.event_payload['reportable_type'] ||= notification.notifiable.reports.first.reportable.class.to_s
+      end
     end
   end
 

@@ -1,25 +1,23 @@
-require 'rails_helper'
-
 RSpec.describe WorkflowRunsFinder do
+  subject { described_class.new }
+
   let(:workflow_token) { create(:workflow_token) }
   # GitHub
-  let!(:workflow_run_github_push) { create(:workflow_run_github_succeeded, :push, token: workflow_token) }
-  let!(:workflow_run_github_tag_push) { create(:workflow_run_github_succeeded, :tag_push, token: workflow_token) }
-  let!(:workflow_run_github_pull_request_opened) { create(:workflow_run_github_succeeded, :pull_request_opened, token: workflow_token) }
-  let!(:workflow_run_github_pull_request_closed) { create(:workflow_run_github_succeeded, :pull_request_closed, token: workflow_token) }
+  let!(:workflow_run_github_push) { create(:workflow_run, :push, :succeeded, token: workflow_token, event_source_name: '94561cd') }
+  let!(:workflow_run_github_tag_push) { create(:workflow_run, :tag_push, :succeeded, token: workflow_token, event_source_name: '94561cd') }
+  let!(:workflow_run_github_pull_request_opened) { create(:workflow_run, :succeeded, token: workflow_token) }
+  let!(:workflow_run_github_pull_request_closed) { create(:workflow_run, :succeeded, :pull_request_closed, token: workflow_token) }
   # GitLab
-  let!(:workflow_run_gitlab_push) { create(:workflow_run_gitlab_succeeded, :push, token: workflow_token) }
-  let!(:workflow_run_gitlab_tag_push) { create(:workflow_run_gitlab_succeeded, :tag_push, token: workflow_token) }
-  let!(:workflow_run_gitlab_pull_request_opened) { create(:workflow_run_gitlab_succeeded, :pull_request_opened, token: workflow_token) }
-  let!(:workflow_run_gitlab_pull_request_closed) { create(:workflow_run_gitlab_succeeded, :pull_request_closed, token: workflow_token) }
+  let!(:workflow_run_gitlab_push) { create(:workflow_run_gitlab, :push, :succeeded, token: workflow_token, event_source_name: '97561db') }
+  let!(:workflow_run_gitlab_tag_push) { create(:workflow_run_gitlab, :tag_push, :succeeded, token: workflow_token, event_source_name: '97561db') }
+  let!(:workflow_run_gitlab_pull_request_opened) { create(:workflow_run_gitlab, :succeeded, token: workflow_token) }
+  let!(:workflow_run_gitlab_pull_request_closed) { create(:workflow_run_gitlab, :succeeded, :pull_request_closed, token: workflow_token) }
 
   before do
-    ['success', 'running', 'fail'].each do |status|
+    %w[success running fail].each do |status|
       create(:workflow_run, token: workflow_token, status: status, request_headers: "HTTP_X_GITHUB_EVENT: pull_request\n")
     end
   end
-
-  subject { described_class.new }
 
   describe '#all' do
     it 'returns all workflow runs' do
@@ -44,6 +42,16 @@ RSpec.describe WorkflowRunsFinder do
 
     it 'returns workflows for tag push generic event' do
       expect(subject.with_generic_event_type('tag_push').count).to eq(2)
+    end
+  end
+
+  describe '#with_event_source_name' do
+    it 'returns workflows for the specfied commit sha' do
+      expect(subject.with_event_source_name('97561db', 'commit').count).to eq(2)
+    end
+
+    it 'returns all workflow runs when given an empty string' do
+      expect(subject.with_event_source_name('', 'commit').count).to eq(11)
     end
   end
 

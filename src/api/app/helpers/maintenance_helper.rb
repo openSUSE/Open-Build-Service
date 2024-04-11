@@ -42,6 +42,7 @@ module MaintenanceHelper
 
   def release_package(source_package, target, target_package_name, opts = {})
     filter_source_repository = opts[:filter_source_repository]
+    filter_architecture      = opts[:filter_architecture]
     multibuild_container     = opts[:multibuild_container]
     action                   = opts[:action]
     setrelease               = opts[:setrelease]
@@ -69,9 +70,9 @@ module MaintenanceHelper
 
     # copy binaries
     u_ids = if target.is_a?(Repository)
-              copy_binaries_to_repository(filter_source_repository, source_package, target, target_package_name, multibuild_container, setrelease)
+              copy_binaries_to_repository(filter_source_repository, filter_architecture, source_package, target, target_package_name, multibuild_container, setrelease)
             else
-              copy_binaries(filter_source_repository, source_package, target_package_name, target_project, multibuild_container, setrelease)
+              copy_binaries(filter_source_repository, filter_architecture, source_package, target_package_name, target_project, multibuild_container, setrelease, manual)
             end
 
     # create or update main package linking to incident package
@@ -79,12 +80,10 @@ module MaintenanceHelper
 
     # publish incident if source is read protect, but release target is not. assuming it got public now.
     f = source_package.project.flags.find_by_flag_and_status('access', 'disable')
-    if f
-      unless target_project.flags.find_by_flag_and_status('access', 'disable')
-        source_package.project.flags.delete(f)
-        source_package.project.store(comment: 'project becomes public on release action')
-        # patchinfos stay unpublished, it is anyway too late to test them now ...
-      end
+    if f && !target_project.flags.find_by_flag_and_status('access', 'disable')
+      source_package.project.flags.delete(f)
+      source_package.project.store(comment: 'project becomes public on release action')
+      # patchinfos stay unpublished, it is anyway too late to test them now ...
     end
 
     # release the scheduler lock
@@ -109,7 +108,7 @@ module MaintenanceHelper
     }
     upload_params[:requestid] = action.bs_request.number if action
     upload_path = Addressable::URI.escape("/source/#{target_project.name}/#{target_package_name}")
-    upload_path << Backend::Connection.build_query_from_hash(upload_params, [:user, :comment, :cmd, :noservice, :requestid])
+    upload_path << Backend::Connection.build_query_from_hash(upload_params, %i[user comment cmd noservice requestid])
     answer = Backend::Connection.post upload_path, "<directory> <entry name=\"_link\" md5=\"#{md5}\" /> </directory>"
     tpkg.sources_changed(dir_xml: answer)
   end
@@ -132,7 +131,7 @@ module MaintenanceHelper
       comment: "Set link to #{target_package_name} via maintenance_release request"
     }
     upload_path = Addressable::URI.escape("/source/#{target_project.name}/#{base_package_name}/_link")
-    upload_path << Backend::Connection.build_query_from_hash(upload_params, [:user, :rev])
+    upload_path << Backend::Connection.build_query_from_hash(upload_params, %i[user rev])
     link = "<link package='#{target_package_name}' cicount='copy' />\n"
     md5 = Digest::MD5.hexdigest(link)
     Backend::Connection.put upload_path, link
@@ -141,7 +140,7 @@ module MaintenanceHelper
     upload_params[:noservice] = '1'
     upload_params[:requestid] = request.number if request
     upload_path = Addressable::URI.escape("/source/#{target_project.name}/#{base_package_name}")
-    upload_path << Backend::Connection.build_query_from_hash(upload_params, [:user, :comment, :cmd, :noservice, :requestid])
+    upload_path << Backend::Connection.build_query_from_hash(upload_params, %i[user comment cmd noservice requestid])
     answer = Backend::Connection.post upload_path, "<directory> <entry name=\"_link\" md5=\"#{md5}\" /> </directory>"
     lpkg.sources_changed(dir_xml: answer)
   end
@@ -161,34 +160,33 @@ module MaintenanceHelper
       withacceptinfo: '1'
     }
     cp_params[:requestid] = action.bs_request.number if action
-    if target_project.is_maintenance_release? && source_package.is_link?
-      # no permission check here on purpose
-      if source_package.linkinfo['project'] == target_project.name &&
-         source_package.linkinfo['package'] == target_package_name.gsub(/\.[^.]*$/, '')
-        # link target is equal to release target. So we freeze our link.
-        cp_params[:freezelink] = 1
-      end
+    # no permission check here on purpose
+    if target_project.is_maintenance_release? && source_package.is_link? && (source_package.linkinfo['project'] == target_project.name &&
+             source_package.linkinfo['package'] == target_package_name.gsub(/\.[^.]*$/, ''))
+      # link target is equal to release target. So we freeze our link.
+      cp_params[:freezelink] = 1
     end
     cp_path = Addressable::URI.escape("/source/#{target_project.name}/#{target_package_name}")
-    cp_path << Backend::Connection.build_query_from_hash(cp_params, [:cmd, :user, :oproject,
-                                                                     :opackage, :comment, :requestid,
-                                                                     :expand, :withvrev, :noservice,
-                                                                     :freezelink, :withacceptinfo])
+    cp_path << Backend::Connection.build_query_from_hash(cp_params, %i[cmd user oproject
+                                                                       opackage comment requestid
+                                                                       expand withvrev noservice
+                                                                       freezelink withacceptinfo])
     result = Backend::Connection.post(cp_path)
     result = Xmlhash.parse(result.body)
     action.set_acceptinfo(result['acceptinfo']) if action
   end
 
-  def copy_binaries(filter_source_repository, source_package, target_package_name, target_project,
-                    multibuild_container, setrelease)
+  def copy_binaries(filter_source_repository, filter_architecture, source_package, target_package_name,
+                    target_project, multibuild_container, setrelease, manual)
     update_ids = []
     source_package.project.repositories.each do |source_repo|
       next if filter_source_repository && filter_source_repository != source_repo
 
       source_repo.release_targets.each do |releasetarget|
-        # FIXME: filter given release and/or target repos here
+        next if manual && releasetarget.trigger != 'manual'
+
         if releasetarget.target_repository.project == target_project
-          u_id = copy_binaries_to_repository(source_repo, source_package, releasetarget.target_repository,
+          u_id = copy_binaries_to_repository(source_repo, filter_architecture, source_package, releasetarget.target_repository,
                                              target_package_name, multibuild_container, setrelease)
           update_ids << u_id if u_id
         end
@@ -203,8 +201,9 @@ module MaintenanceHelper
     update_ids
   end
 
-  def copy_binaries_to_repository(source_repository, source_package, target_repo, target_package_name,
+  def copy_binaries_to_repository(source_repository, filter_architecture, source_package, target_repo, target_package_name,
                                   multibuild_container, setrelease)
+    # get updateinfo id in case the source package comes from a maintenance project
     u_id = get_updateinfo_id(source_package, target_repo)
     source_package_name = source_package.name
     if multibuild_container.present?
@@ -212,7 +211,12 @@ module MaintenanceHelper
       target_package_name = target_package_name.gsub(/:.*/, '') << ':' << multibuild_container
     end
     source_repository.architectures.each do |arch|
-      # get updateinfo id in case the source package comes from a maintenance project
+      # user architecture filter
+      next if filter_architecture.present? && arch.name != filter_architecture
+
+      # skip automatically because target lacks the architecture
+      next unless target_repo.architectures.include?(arch)
+
       copy_single_binary(arch, target_repo, source_package.project.name, source_package_name,
                          source_repository, target_package_name, u_id, setrelease)
     end
@@ -234,9 +238,9 @@ module MaintenanceHelper
     cp_params[:multibuild] = '1' unless source_package_name.include?(':')
     cp_path = Addressable::URI.escape("/build/#{target_repository.project.name}/#{target_repository.name}/#{arch.name}/#{target_package_name}")
 
-    cp_path << Backend::Connection.build_query_from_hash(cp_params, [:cmd, :oproject, :opackage,
-                                                                     :orepository, :setupdateinfoid,
-                                                                     :resign, :setrelease, :multibuild])
+    cp_path << Backend::Connection.build_query_from_hash(cp_params, %i[cmd oproject opackage
+                                                                       orepository setupdateinfoid
+                                                                       resign setrelease multibuild])
     Backend::Connection.post cp_path
   end
 
@@ -370,9 +374,9 @@ module MaintenanceHelper
       copyopts[:comment]  = 'initialize package as branch'
     end
     path = pkg.source_path
-    path << Backend::Connection.build_query_from_hash(copyopts, [:user, :comment, :cmd, :noservice, :requestid,
-                                                                 :makeoriginolder, :withvrev, :vrevbump,
-                                                                 :instantiate, :oproject, :opackage])
+    path << Backend::Connection.build_query_from_hash(copyopts, %i[user comment cmd noservice requestid
+                                                                   makeoriginolder withvrev vrevbump
+                                                                   instantiate oproject opackage])
     Backend::Connection.post(path)
     pkg.sources_changed
 
@@ -387,8 +391,8 @@ module MaintenanceHelper
       copyopts[:cmd] = 'copy'
       copyopts[:oproject] = p.project.name
       copyopts[:opackage] = p.name
-      path << Backend::Connection.build_query_from_hash(copyopts, [:user, :cmd, :noservice, :requestid,
-                                                                   :oproject, :opackage])
+      path << Backend::Connection.build_query_from_hash(copyopts, %i[user cmd noservice requestid
+                                                                     oproject opackage])
       Backend::Connection.post path
       # and fix the link
       link_xml = Nokogiri::XML(lpkg.source_file('_link'), &:strict).root

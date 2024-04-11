@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe PackageService::FileVerifier do
   let(:file_verifier) { described_class.new(package: package, file_name: file_name, content: content) }
   let!(:project) { create(:project_with_package, name: 'openSUSE:Maintenance', package_name: 'chromium') }
@@ -33,28 +31,28 @@ RSpec.describe PackageService::FileVerifier do
     let(:package) { project.packages.first }
 
     context 'invalid constraints' do
+      subject { file_verifier.call }
+
       let(:file_name) { '_constraints' }
       let(:content) { 'illegal' }
-
-      subject { file_verifier.call }
 
       it { expect { subject }.to raise_error(Suse::ValidationError) }
     end
 
     context 'invalid service file' do
+      subject { file_verifier.call }
+
       let(:file_name) { '_service' }
       let(:content) { 'illegal' }
-
-      subject { file_verifier.call }
 
       it { expect { subject }.to raise_error(Suse::ValidationError) }
     end
 
     context 'valid uploaded file' do
+      subject { file_verifier.call }
+
       let(:file_name) { 'foo.txt' }
       let(:content) { ActionDispatch::Http::UploadedFile.new(filename: file_name, type: 'text/plain', tempfile: temp_file) }
-
-      subject { file_verifier.call }
 
       it { expect { subject }.not_to raise_error }
     end
@@ -69,6 +67,8 @@ RSpec.describe PackageService::FileVerifier do
     end
 
     context 'valid service file' do
+      subject { file_verifier.call }
+
       let(:file_name) { '_service' }
       let(:content) do
         <<-XML
@@ -77,8 +77,6 @@ RSpec.describe PackageService::FileVerifier do
         </services>
         XML
       end
-
-      subject { file_verifier.call }
 
       it { expect { subject }.not_to raise_error }
     end

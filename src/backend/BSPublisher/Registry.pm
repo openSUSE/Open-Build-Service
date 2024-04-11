@@ -400,7 +400,7 @@ sub update_sigs {
 	next;
       }
       print "creating atomic signature for $gun:$tag $digest\n";
-      my $sig = BSConSign::createsig($signfunc, $digest, "$gun:$tag", $creator);
+      my $sig = BSConSign::create_atomic_signature($signfunc, $digest, "$gun:$tag", $creator);
       push @d, [ $tag, $sig ];
     }
     $sigs->{'digests'}->{$digest} = \@d;
@@ -417,20 +417,16 @@ sub update_sigs {
 }
 
 sub create_cosign_manifest {
-  my ($repodir, $oci, $knownmanifests, $knownblobs, $config, @payload_layers) = @_;
-
-  my ($config_ent, $config_blobid) = BSContar::make_blob_entry('config.json', $config);
-  push_blob($repodir, $config_ent);
-  $knownblobs->{$config_blobid} = 1;
+  my ($repodir, $oci, $knownmanifests, $knownblobs, @layer_ents) = @_;
+  my $config_ent = BSConSign::create_cosign_config_ent(\@layer_ents);
   my $config_data = BSContar::create_config_data($config_ent, $oci);
+  push_blob($repodir, $config_ent);
+  $knownblobs->{$config_ent->{'blobid'}} = 1;
   my @layer_data;
-  while (@payload_layers >= 2) {
-    my ($payload_layer_data, $payload) = splice(@payload_layers, 0, 2);
-    my ($payload_ent, $payload_blobid) = BSContar::make_blob_entry($payload_layer_data->{'digest'}, $payload);
-    die unless $payload_blobid eq $payload_layer_data->{'digest'};
-    push_blob($repodir, $payload_ent);
-    $knownblobs->{$payload_blobid} = 1;
-    push @layer_data, $payload_layer_data;
+  for my $layer_ent (@layer_ents) {
+    push @layer_data, BSContar::create_layer_data($layer_ent, $oci);
+    push_blob($repodir, $layer_ent);
+    $knownblobs->{$layer_ent->{'blobid'}} = 1;
   }
   my $mani = BSContar::create_dist_manifest_data($config_data, \@layer_data, $oci);
   my $mani_json = BSContar::create_dist_manifest($mani);
@@ -482,14 +478,15 @@ sub update_cosign {
       next;
     }
     print "creating cosign signature for $gun $digest\n";
-    my ($config, $payload_layer, $payload, $sig) = BSConSign::createcosign($signfunc, $digest, $gun, $creator);
-    my $mani_id = create_cosign_manifest($repodir, $oci, $knownmanifests, $knownblobs, $config, $payload_layer, $payload);
+    my ($cosign_ent, $sig) = BSConSign::create_cosign_signature_ent($signfunc, $digest, $gun, $creator);
+    my $mani_id = create_cosign_manifest($repodir, $oci, $knownmanifests, $knownblobs, $cosign_ent);
     $sigs->{'digests'}->{$digest} = $mani_id;
     if ($rekorserver) {
       print "uploading cosign signature to $rekorserver\n";
       my $sslpubkey = BSX509::keydata2pubkey(BSPGP::pk2keydata($gpgpubkey));
       $sslpubkey = BSASN1::der2pem($sslpubkey, 'PUBLIC KEY');
-      BSRekor::upload_hashedrekord($rekorserver, $payload_layer->{'digest'}, $sslpubkey, $sig);
+      my $hash = 'sha256:'.Digest::SHA::sha256_hex($cosign_ent->{'data'});	# must match signfunc
+      BSRekor::upload_hashedrekord($rekorserver, $hash, $sslpubkey, $sig);
     }
   }
 
@@ -497,7 +494,7 @@ sub update_cosign {
   for my $digest (sort keys %$digests_to_cosign) {
     my $oci = 1;	# always use oci mime types
     my $containerinfo = $digests_to_cosign->{$digest}->[1];
-    my $numlayers = ($containerinfo->{'slsa_provenance'} ? 1 : 0) + ($containerinfo->{'spdx_file'} ? 1 : 0) + ($containerinfo->{'cyclonedx_file'} ? 1 : 0);
+    my $numlayers = ($containerinfo->{'slsa_provenance'} ? 1 : 0) + ($containerinfo->{'spdx_file'} ? 1 : 0) + ($containerinfo->{'cyclonedx_file'} ? 1 : 0) + scalar(@{$containerinfo->{'intoto_files'} || []});
     if (!$numlayers) {
       delete $sigs->{'attestations'}->{$digest};
       next;
@@ -507,16 +504,17 @@ sub update_cosign {
       $sigs->{'attestations'}->{$digest} = $old;
       next;
     }
-    print "creating cosign attestations for $gun $digest\n";
+    print "creating $numlayers cosign attestations for $gun $digest\n";
     my @attestations;
     push @attestations, BSConSign::fixup_intoto_attestation($containerinfo->{'slsa_provenance'}, $signfunc, $digest, $gun) if $containerinfo->{'slsa_provenance'};
     push @attestations, BSConSign::fixup_intoto_attestation(readstr($containerinfo->{'spdx_file'}), $signfunc, $digest, $gun) if $containerinfo->{'spdx_file'};
     push @attestations, BSConSign::fixup_intoto_attestation(readstr($containerinfo->{'cyclonedx_file'}), $signfunc, $digest, $gun) if $containerinfo->{'cyclonedx_file'};
-    my ($config, @attestation_layers) = BSConSign::createcosign_attestation($digest, \@attestations);
-    my $mani_id = create_cosign_manifest($repodir, $oci, $knownmanifests, $knownblobs, $config, @attestation_layers);
+    push @attestations, BSConSign::fixup_intoto_attestation(readstr($_), $signfunc, $digest, $gun) for @{$containerinfo->{'intoto_files'} || []};
+    my @attestation_ents = BSConSign::create_cosign_attestation_ents(\@attestations);
+    my $mani_id = create_cosign_manifest($repodir, $oci, $knownmanifests, $knownblobs, @attestation_ents);
     $sigs->{'attestations'}->{$digest} = $mani_id;
     if ($rekorserver) {
-      print "uploading cosign attestation to $rekorserver\n";
+      print "uploading cosign attestations to $rekorserver\n";
       my $sslpubkey = BSX509::keydata2pubkey(BSPGP::pk2keydata($gpgpubkey));
       $sslpubkey = BSASN1::der2pem($sslpubkey, 'PUBLIC KEY');
       for my $attestation (@attestations) {
@@ -548,12 +546,34 @@ sub create_manifestinfo {
   push_manifestinfo($repodir, $imginfo->{'distmanifest'}, JSON::XS->new->utf8->canonical->encode($imginfo));
 }
 
+sub open_container_tar {
+  my ($containerinfo, $file) = @_;
+  my ($tar, $mtime);
+  if (($containerinfo->{'type'} || '') eq 'artifacthub') {
+    ($tar, $mtime) = BSContar::container_from_artifacthub($containerinfo->{'artifacthubdata'});
+  } elsif (!defined($file)) {
+    ($tar, $mtime) = BSPublisher::Containerinfo::construct_container_tar($containerinfo, 1);
+    # set blobfile in entries so we can create a link in push_blob
+    for (@$tar) {
+      $_->{'blobfile'} = "$containerinfo->{'blobdir'}/_blob.$_->{'blobid'}" if $_->{'blobid'};
+    }
+  } elsif (($containerinfo->{'type'} || '') eq 'helm') {
+    ($tar, $mtime) = BSContar::container_from_helm($file, $containerinfo->{'config_json'}, $containerinfo->{'tags'});
+  } else {
+    ($tar, $mtime) = BSContar::open_container_tar($file);
+  }
+  die("incomplete containerinfo\n") unless $tar; 
+  return ($tar, $mtime);
+}
+
 sub push_containers {
-  my ($registry, $projid, $repoid, $repo, $tags, $pubkey, $signargs, $multiarch) = @_;
+  my ($registry, $projid, $repoid, $repo, $tags, $data) = @_;
+
+  my ($pubkey, $signargs) = ($data->{'pubkey'}, $data->{'signargs'});
 
   my $rekorserver = $registry->{'rekorserver'};
   my $gun = $registry->{'notary_gunprefix'} || $registry->{'server'};
-  undef $gun if ($gun && $gun eq 'local:') || !defined($pubkey);
+  undef $gun if $gun && $gun eq 'local:';
   if ($gun) {
     $gun =~ s/^https?:\/\///;
     $gun = "$gun/$repo";
@@ -589,17 +609,18 @@ sub push_containers {
       next;
     }
     my $containerinfos = $tags->{$tag};
-    my $multiarchtag = $multiarch;
-    $multiarchtag = 1 if @$containerinfos > 1;
-    $multiarchtag = 0 if @$containerinfos == 1 && ($containerinfos->[0]->{'type'} || '') eq 'helm';
-    die("must use multiarch if multiple containers are to be pushed\n") if @$containerinfos > 1 && !$multiarchtag;
+    my $multiarch = $data->{'multiarch'};
+    $multiarch = 1 if @$containerinfos > 1;
+    $multiarch = 0 if @$containerinfos == 1 && ($containerinfos->[0]->{'type'} || '') eq 'helm';
+    $multiarch = 0 if @$containerinfos == 1 && ($containerinfos->[0]->{'type'} || '') eq 'artifacthub';
+    die("must use multiarch if multiple containers are to be pushed\n") if @$containerinfos > 1 && !$multiarch;
     my %multiplatforms;
     my @multimanifests;
     my @imginfos;
     my $oci;
     # use oci types if we have a helm chart or we use a nonstandard compression
     for my $containerinfo (@$containerinfos) {
-      $oci = 1 if ($containerinfo->{'type'} || '') eq 'helm';
+      $oci = 1 if ($containerinfo->{'type'} || '') eq 'helm' || ($containerinfo->{'type'} || '') eq 'artifacthub';
       $oci = 1 if grep {$_ && $_ ne 'gzip'} @{$containerinfo->{'layer_compression'} || []};
     }
     for my $containerinfo (@$containerinfos) {
@@ -618,22 +639,7 @@ sub push_containers {
 	next;
       }
 
-      my ($tar, $mtime, $layer_compression);
-      my $tarfd;
-      if ($containerinfo->{'uploadfile'}) {
-	open($tarfd, '<', $containerinfo->{'uploadfile'}) || die("$containerinfo->{'uploadfile'}: $!\n");
-	if (($containerinfo->{'type'} || '') eq 'helm') {
-	  ($tar, $mtime, $layer_compression) = BSContar::container_from_helm($containerinfo->{'uploadfile'}, $containerinfo->{'config_json'}, $containerinfo->{'tags'});
-	} else {
-	  ($tar, $mtime, $layer_compression) = BSContar::normalize_container($tarfd, 1);
-	}
-      } else {
-	($tar, $mtime, $layer_compression) = BSPublisher::Containerinfo::construct_container_tar($containerinfo, 1);
-	# set blobfile in entries so we can create a link in push_blob
-        for (@$tar) {
-	  $_->{'blobfile'} = "$containerinfo->{'blobdir'}/_blob.$_->{'blobid'}" if $_->{'blobid'};
-	}
-      }
+      my ($tar, $mtime) = open_container_tar($containerinfo, $containerinfo->{'uploadfile'});
       my %tar = map {$_->{'name'} => $_} @$tar;
 
       my ($manifest_ent, $manifest) = BSContar::get_manifest(\%tar);
@@ -655,7 +661,6 @@ sub push_containers {
       $platformstr .= " variant:$govariant" if $govariant;
       if ($multiplatforms{$platformstr}) {
 	print "ignoring $containerinfo->{'file'}, already have $platformstr\n";
-	close $tarfd if $tarfd;
 	next;
       }
       $multiplatforms{$platformstr} = 1;
@@ -669,9 +674,7 @@ sub push_containers {
       # put layer blobs into repo
       my %layer_datas;
       my @layer_data;
-      my @layer_comp = @{$layer_compression || []};
       for my $layer_file (@layers) {
-	my $lcomp = shift @layer_comp;
 	if ($layer_datas{$layer_file}) {
 	  # already did that file, just reuse old layer data
 	  push @layer_data, $layer_datas{$layer_file};
@@ -679,8 +682,11 @@ sub push_containers {
 	}
 	my $layer_ent = $tar{$layer_file};
 	die("File $layer_file not included in tar\n") unless $layer_ent;
-	$lcomp = 'gzip' unless $oci && $lcomp && ($lcomp eq 'zstd' || $lcomp =~ /^zstd:/);
-	my $layer_data = BSContar::create_layer_data($layer_ent, $oci, $lcomp);
+	# normalize layer (but not if we reconstructed or we already have the mime type)
+	if (!$layer_ent->{'mimetype'} && $containerinfo->{'uploadfile'}) {
+	  $layer_ent = BSContar::normalize_layer($layer_ent, $oci);
+	}
+	my $layer_data = BSContar::create_layer_data($layer_ent, $oci);
 	push @layer_data, $layer_data;
 	$layer_datas{$layer_file} = $layer_data;
 
@@ -688,7 +694,6 @@ sub push_containers {
         push_blob($repodir, $layer_ent);
         $knownblobs{$layer_blobid} = 1;
       }
-      close $tarfd if $tarfd;
 
       # put manifest into repo
       my $mani = BSContar::create_dist_manifest_data($config_data, \@layer_data, $oci);
@@ -741,7 +746,7 @@ sub push_containers {
       'images' => \@imginfos,
     };
     my ($mani_id, $mani_size);
-    if ($multiarchtag) {
+    if ($multiarch) {
       # create fat manifest
       my $mani = BSContar::create_dist_manifest_list_data(\@multimanifests, $oci);
       my $mani_json = BSContar::create_dist_manifest_list($mani);
@@ -763,7 +768,7 @@ sub push_containers {
   }
 
   # write signatures file (need to do this early as it adds manifests/blobs)
-  if ($gun && %digests_to_cosign) {
+  if ($gun && defined($pubkey) && %digests_to_cosign) {
     update_cosign($prp, $repo, $gun, \%digests_to_cosign, $pubkey, $signargs, $rekorserver, \%knownmanifests, \%knownblobs);
   } elsif (-e "$repodir/:cosign") {
     unlink("$repodir/:cosign");
@@ -810,11 +815,16 @@ sub push_containers {
   if (BSUtil::identical($oldinfo, $info)) {
     print "local registry: no change\n";
   } else {
+    if ($data->{'notify'} && $gun) {
+      for my $tag (sort keys %info) {
+        $data->{'notify'}->("$gun:$tag") unless $oldinfo && BSUtil::identical(($oldinfo->{'tags'} || {})->{$tag}, $info{$tag});
+      }
+    }
     BSUtil::store("$repodir/.info.$$", "$repodir/:info", $info);
   }
 
   # write TUF file
-  if ($gun) {
+  if ($gun && defined($pubkey)) {
     update_tuf($prp, $repo, $gun, $containerdigests, $pubkey, $signargs);
   } elsif (-e "$repodir/:tuf") {
     unlink("$repodir/:tuf.old");
@@ -822,7 +832,7 @@ sub push_containers {
   }
 
   # write signatures file
-  if ($gun) {
+  if ($gun && defined($pubkey)) {
     update_sigs($prp, $repo, $gun, \%knownimagedigests, $pubkey, $signargs);
   } elsif (-e "$repodir/:sigs") {
     unlink("$repodir/:sigs");

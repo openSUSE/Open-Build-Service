@@ -1,7 +1,6 @@
-require 'rails_helper'
 require 'webmock/rspec'
 
-RSpec.describe Webui::Cloud::Ec2::UploadJobsController, vcr: true do
+RSpec.describe Webui::Cloud::Ec2::UploadJobsController, :vcr do
   let!(:ec2_configuration) { create(:ec2_configuration) }
   let!(:user_with_ec2_configuration) { create(:confirmed_user, login: 'tom', ec2_configuration: ec2_configuration) }
   let(:project) { create(:project, name: 'EC2Images') }
@@ -105,11 +104,11 @@ RSpec.describe Webui::Cloud::Ec2::UploadJobsController, vcr: true do
     end
 
     context 'without backend configured' do
+      subject { 'no cloud upload server configured.' }
+
       before do
         stub_request(:post, post_url).and_return(body: error_response, status: 400)
       end
-
-      subject { 'no cloud upload server configured.' }
 
       include_context 'it redirects and assigns flash error'
     end

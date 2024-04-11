@@ -23,6 +23,11 @@ module Backend
                    params: { code: :lastfailures })
         end
 
+        # Returns the file of a package
+        def self.file(project_name, repository_name, architecture_name, package_name, file_name)
+          http_get(['/build/:project/:repository/:architecture/:package/:file', project_name, repository_name, architecture_name, package_name, file_name])
+        end
+
         # Returns the publishedpath for a file of a package
         def self.publishedpath(project_name, repository_name, package_name, architecture_name, file_name)
           http_get(['/build/:project/:repository/:architecture/:package/:file',
@@ -36,7 +41,7 @@ module Backend
           published_url = Xmlhash.parse(publishedpath(project_name, repository_name, package_name, architecture_name, file_name))['url']
           return unless published_url
 
-          return published_url if published_url.end_with?(file_name) # FIXME: bs_srcserver.published_path should not return an url in the first place...
+          published_url if published_url.end_with?(file_name) # FIXME: bs_srcserver.published_path should not return an url in the first place...
         end
 
         # Returns the RPMlint log
@@ -79,7 +84,7 @@ module Backend
           return {} if repository_paths.empty? && repository_urls.empty?
 
           transform_binary_packages_response(http_get(['/build/:project/_availablebinaries', project_name],
-                                                      params: { url: repository_urls, path: repository_paths }, expand: [:url, :path]))
+                                                      params: { url: repository_urls, path: repository_paths }, expand: %i[url path]))
         end
 
         # TODO: Move this method that transforms the output into another module

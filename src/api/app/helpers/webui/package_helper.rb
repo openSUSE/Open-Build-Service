@@ -20,13 +20,13 @@ module Webui::PackageHelper
   end
 
   def guess_code_class(filename)
-    return 'xml' if filename.in?(['_aggregate', '_link', '_patchinfo', '_service']) || filename =~ /.*\.service/
-    return 'shell' if filename =~ /^rc[\w-]+$/ # rc-scripts are shell
-    return 'python' if filename =~ /^.*rpmlintrc$/
+    return 'xml' if filename.in?(%w[_aggregate _link _patchinfo _service]) || filename =~ /.*\.service/
+    return 'shell' if /^rc[\w-]+$/.match?(filename) # rc-scripts are shell
+    return 'python' if /^.*rpmlintrc$/.match?(filename)
     return 'makefile' if filename == 'debian.rules'
     return 'baselibs' if filename == 'baselibs.conf'
-    return 'spec' if filename =~ /^macros\.\w+/
-    return 'dockerfile' if filename =~ /^(D|d)ockerfile.*$/
+    return 'spec' if /^macros\.\w+/.match?(filename)
+    return 'dockerfile' if /^(D|d)ockerfile.*$/.match?(filename)
 
     ext = Pathname.new(filename).extname.downcase
     case ext
@@ -63,20 +63,26 @@ module Webui::PackageHelper
   end
 
   def humanize_time(seconds)
-    [[60, :s], [60, :m], [24, :h], [0, :d]].map do |count, name|
+    [[60, :s], [60, :m], [24, :h], [0, :d]].filter_map do |count, name|
       if seconds.positive?
         seconds, n = seconds.divmod(count.positive? ? count : seconds + 1)
         "#{n.to_i}#{name}"
       end
-    end.compact.reverse.join(' ')
+    end.reverse.join(' ')
   end
 
   def expand_diff?(filename, state)
     state != 'deleted' && filename.exclude?('/') && (filename == '_patchinfo' || filename.ends_with?('.spec', '.changes'))
   end
 
-  def viewable_file?(filename)
+  def viewable_file?(filename, size = nil)
+    return false if size && size > 1.megabyte
+
     !binary_file?(filename) && filename.exclude?('/')
+  end
+
+  def editable_file?(filename, size = nil)
+    viewable_file?(filename, size) && !filename.match?(/^_service[_:]/)
   end
 
   def binary_file?(filename)

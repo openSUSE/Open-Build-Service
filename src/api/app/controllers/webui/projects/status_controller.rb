@@ -67,7 +67,7 @@ module Webui
         pname = package.name
 
         currentpack['requests_from'] = []
-        key = @api_obj.name + '/' + pname
+        key = "#{@api_obj.name}/#{pname}"
         if @submits.key?(key)
           return if @ignore_pending
 
@@ -98,20 +98,17 @@ module Webui
         check_devel_package_status(currentpack, package)
         currentpack.merge!(project_status_set_version(package))
 
-        if package.links_to
-          if currentpack['md5'] != package.links_to.verifymd5
-            currentpack['problems'] << 'diff_against_link'
-            currentpack['lproject'] = package.links_to.project
-            currentpack['lpackage'] = package.links_to.name
-          end
+        if package.links_to && (currentpack['md5'] != package.links_to.verifymd5)
+          currentpack['problems'] << 'diff_against_link'
+          currentpack['lproject'] = package.links_to.project
+          currentpack['lpackage'] = package.links_to.name
         end
 
         return unless currentpack['firstfail'] || currentpack['failedcomment'] || currentpack['upstream_version'] ||
                       !currentpack['problems'].empty? || !currentpack['requests_from'].empty? || !currentpack['requests_to'].empty?
 
-        if @limit_to_old
-          return unless currentpack['upstream_version']
-        end
+        return if @limit_to_old && !(currentpack['upstream_version'])
+
         @packages << currentpack
       end
 
@@ -181,11 +178,11 @@ module Webui
       def status_gather_requests
         # we do not filter requests for project because we need devel projects too later on and as long as the
         # number of open requests is limited this is the easiest solution
-        raw_requests = BsRequest.order(:number).where(state: [:new, :review, :declined]).joins(:bs_request_actions)
-                                .where(bs_request_actions: { type: ['submit', 'delete'] }).pluck('bs_requests.number',
-                                                                                                 'bs_requests.state',
-                                                                                                 'bs_request_actions.target_project',
-                                                                                                 'bs_request_actions.target_package')
+        raw_requests = BsRequest.order(:number).where(state: %i[new review declined]).joins(:bs_request_actions)
+                                .where(bs_request_actions: { type: %w[submit delete] }).pluck('bs_requests.number',
+                                                                                              'bs_requests.state',
+                                                                                              'bs_request_actions.target_project',
+                                                                                              'bs_request_actions.target_package')
 
         @declined_requests = {}
         @submits = {}

@@ -1,6 +1,6 @@
 require 'browser_helper'
 
-RSpec.describe 'Requests', js: true, vcr: true do
+RSpec.describe 'Requests', :js, :vcr do
   let(:submitter) { create(:confirmed_user, :with_home, login: 'kugelblitz') }
   let(:receiver) { create(:confirmed_user, :with_home, login: 'titan') }
   let(:target_project) { receiver.home_project }
@@ -16,7 +16,7 @@ RSpec.describe 'Requests', js: true, vcr: true do
         find('.show-content').click
         expect(page).to have_css('div.expanded')
         find('.show-content').click
-        expect(page).not_to have_css('div.expanded')
+        expect(page).to have_no_css('div.expanded')
       end
     end
   end
@@ -29,10 +29,10 @@ RSpec.describe 'Requests', js: true, vcr: true do
     it 'show request comments' do
       visit request_show_path(bs_request)
       expect(page).to have_text(comment_1.body)
-      expect(page).not_to have_text(comment_2.body)
+      expect(page).to have_no_text(comment_2.body)
       find('a', text: "Comments for request #{superseded_bs_request.number}").click
       expect(page).to have_text(comment_2.body)
-      expect(page).not_to have_text(comment_1.body)
+      expect(page).to have_no_text(comment_1.body)
     end
 
     describe 'request description field' do
@@ -87,7 +87,7 @@ RSpec.describe 'Requests', js: true, vcr: true do
         click_button 'Accept'
 
         expect(page).to have_text("Request #{bs_request.number}")
-        expect(find('span.badge.bg-success')).to have_text('accepted')
+        expect(find('span.badge.text-bg-success')).to have_text('accepted')
         expect(page).to have_text('In state accepted')
       end
     end
@@ -123,7 +123,7 @@ RSpec.describe 'Requests', js: true, vcr: true do
         click_button 'Accept'
 
         expect(page).to have_text("Request #{bs_request.number}")
-        expect(find('span.badge.bg-success')).to have_text('accepted')
+        expect(find('span.badge.text-bg-success')).to have_text('accepted')
         expect(page).to have_text('In state accepted')
       end
     end
@@ -155,7 +155,7 @@ RSpec.describe 'Requests', js: true, vcr: true do
         click_button 'Accept'
 
         expect(page).to have_text("Request #{bs_request.number}")
-        expect(find('span.badge.bg-success')).to have_text('accepted')
+        expect(find('span.badge.text-bg-success')).to have_text('accepted')
         expect(page).to have_text('In state accepted')
       end
     end
@@ -189,7 +189,7 @@ RSpec.describe 'Requests', js: true, vcr: true do
         click_button 'Accept'
 
         expect(page).to have_text("Request #{bs_request.number}")
-        expect(find('span.badge.bg-success')).to have_text('accepted')
+        expect(find('span.badge.text-bg-success')).to have_text('accepted')
         expect(page).to have_text('In state accepted')
       end
     end
@@ -209,9 +209,9 @@ RSpec.describe 'Requests', js: true, vcr: true do
         click_button('Accept')
         expect(page).to have_text(/Open review for\s+#{reviewer.login}/)
         expect(page).to have_text('Request 1')
-        expect(find('span.badge.bg-secondary')).to have_text('review')
+        expect(find('span.badge.text-bg-secondary')).to have_text('review')
         expect(page).to have_text('In state review')
-        expect(Review.all.count).to eq(1)
+        expect(Review.count).to eq(1)
         logout
 
         login reviewer
@@ -299,7 +299,7 @@ RSpec.describe 'Requests', js: true, vcr: true do
         it 'does not show any request reason' do
           login reviewer
           visit request_show_path(bs_request)
-          expect(find_by_id('review-0')).not_to have_text('requested:')
+          expect(find_by_id('review-0')).to have_no_text('requested:')
         end
       end
 
@@ -356,6 +356,16 @@ RSpec.describe 'Requests', js: true, vcr: true do
       visit request_show_path(delete_bs_request)
       expect(page).to have_text('Project Maintainers')
     end
+
+    it 'a delete request does not show the Changes Tab' do
+      visit request_show_path(delete_bs_request)
+      expect(page).to have_no_text('Changes')
+    end
+
+    it 'a delete request does not show the Issues Tab' do
+      visit request_show_path(delete_bs_request)
+      expect(page).to have_no_text('Issues')
+    end
   end
 
   describe 'for a request with a deleted target project' do
@@ -371,7 +381,7 @@ RSpec.describe 'Requests', js: true, vcr: true do
 
     it 'does not show the project maintainers' do
       visit request_show_path(delete_bs_request)
-      expect(page).not_to have_text('Project Maintainers')
+      expect(page).to have_no_text('Project Maintainers')
     end
   end
 
@@ -389,14 +399,14 @@ RSpec.describe 'Requests', js: true, vcr: true do
     it 'does not set stage information for submit request' do
       login submitter
       visit request_show_path(bs_request)
-      click_on('Add Reviewer')
+      click_button('Add Reviewer')
       within '#add-reviewer-modal' do
         select 'Project Maintainers', from: 'review_type'
         fill_in 'Project', with: staging_project.name
         click_button('Accept')
       end
-      expect(page).not_to have_text('Staged in')
-      expect(page).not_to have_css('.bg-staging')
+      expect(page).to have_no_text('Staged in')
+      expect(page).to have_no_css('.bg-staging')
     end
   end
 
@@ -416,7 +426,7 @@ RSpec.describe 'Requests', js: true, vcr: true do
     it 'shows staging request information' do
       login staging_user
       visit request_show_path(staging_request)
-      click_on('Add Reviewer')
+      click_button('Add Reviewer')
       within '#add-reviewer-modal' do
         select 'Project Maintainers', from: 'review_type'
         fill_in 'Project', with: staging_project.name
@@ -424,6 +434,41 @@ RSpec.describe 'Requests', js: true, vcr: true do
       end
       expect(page).to have_text('Staged in')
       expect(page).to have_css('.bg-staging')
+    end
+  end
+
+  describe 'a request with patchinfo' do
+    let(:maintenance_project) do
+      create(:maintenance_project,
+             name: 'MaintenanceProject',
+             title: 'official maintenance space',
+             target_project: [target_project],
+             maintainer: receiver)
+    end
+    let(:maintenance_request) do
+      create(:bs_request_with_maintenance_incident_actions, :with_patchinfo, source_project_name: source_project.name,
+                                                                             source_package_names: [source_package.name],
+                                                                             target_project_name: maintenance_project.name,
+                                                                             target_releaseproject_names: [target_project.name])
+    end
+
+    before do
+      Flipper.enable(:request_show_redesign)
+      login submitter
+      create(:patchinfo, project_name: source_project.name, package_name: 'patchinfo')
+      visit request_show_path(maintenance_request)
+    end
+
+    it 'shows patch information' do
+      expect(page).to have_css('#patchinfo-details', text: 'Patches')
+    end
+
+    it 'shows category badge' do
+      expect(page).to have_css('#patchinfo-details .badge.text-bg-info', text: 'Recommended')
+    end
+
+    it 'shows rating badge' do
+      expect(page).to have_css('#patchinfo-details .badge.text-bg-secondary', text: 'Low priority')
     end
   end
 end

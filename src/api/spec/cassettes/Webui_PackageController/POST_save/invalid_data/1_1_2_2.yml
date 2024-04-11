@@ -39,8 +39,7 @@ http_interactions:
           <description></description>
           <person userid="tom" role="maintainer"/>
         </project>
-    http_version: null
-  recorded_at: Fri, 29 May 2020 15:36:44 GMT
+  recorded_at: Tue, 26 Sep 2023 14:23:55 GMT
 - request:
     method: put
     uri: http://backend:5352/source/home:tom/my_package/_meta?user=tom
@@ -48,8 +47,8 @@ http_interactions:
       encoding: UTF-8
       string: |
         <package name="my_package" project="home:tom">
-          <title>The Golden Apples of the Sun</title>
-          <description>Suscipit velit quisquam vel.</description>
+          <title>Gone with the Wind</title>
+          <description>Vel quaerat nulla voluptatibus.</description>
         </package>
     headers:
       Accept-Encoding:
@@ -70,14 +69,13 @@ http_interactions:
       Connection:
       - close
       Content-Length:
-      - '162'
+      - '155'
     body:
       encoding: UTF-8
       string: |
         <package name="my_package" project="home:tom">
-          <title>The Golden Apples of the Sun</title>
-          <description>Suscipit velit quisquam vel.</description>
+          <title>Gone with the Wind</title>
+          <description>Vel quaerat nulla voluptatibus.</description>
         </package>
-    http_version: null
-  recorded_at: Fri, 29 May 2020 15:36:44 GMT
-recorded_with: VCR 5.1.0
+  recorded_at: Tue, 26 Sep 2023 14:23:55 GMT
+recorded_with: VCR 6.2.0

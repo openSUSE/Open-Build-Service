@@ -1,0 +1,14 @@
+{
+  "action": "opened",
+  "pull_request": {
+    "number": 1,
+    "html_url": "http://github.com/something"
+  },
+  "repository": {
+    "name": "hello_world",
+    "html_url": "https://github.com",
+    "owner": {
+      "login": "iggy"
+    }
+  }
+}

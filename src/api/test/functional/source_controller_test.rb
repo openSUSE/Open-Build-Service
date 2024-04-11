@@ -1,4 +1,3 @@
-# rubocop:disable Layout/LineLength
 # rubocop:disable Metrics/ClassLength
 require File.expand_path(File.dirname(__FILE__) + '/..') + '/test_helper'
 require 'source_controller'
@@ -59,7 +58,8 @@ class SourceControllerTest < ActionDispatch::IntegrationTest
                    children: { count: 2, only: { tag: 'entry' } }
   end
 
-  def test_post_orderkiwirepos # spec/controllers/source_controller_spec.rb
+  # spec/controllers/source_controller_spec.rb
+  def test_post_orderkiwirepos
     # urls with http protocol
     kiwi_config_http = <<~EOF
       <?xml version='1.0' encoding='UTF-8'?>
@@ -103,7 +103,8 @@ class SourceControllerTest < ActionDispatch::IntegrationTest
     assert_equal second['source']['path'], 'obs://BaseDistro2.0/BaseDistro2_repo'
   end
 
-  def test_anonymous_access_for_global_commands # spec/controllers/source_controller_spec.rb
+  # spec/controllers/source_controller_spec.rb
+  def test_anonymous_access_for_global_commands
     post '/source?cmd=orderkiwirepos'
     # anonymous access allowed here, just forwarding the request to backend fails
     assert_response 400
@@ -785,8 +786,6 @@ class SourceControllerTest < ActionDispatch::IntegrationTest
     assert_response 403
     post '/build/home:Iggy?cmd=wipe'
     assert_response 403
-    post '/source/home:Iggy/TestLinkPack?cmd=wipe'
-    assert_response 403
 
     # check branching from a locked project
     post '/source/home:Iggy/TestLinkPack', params: { cmd: 'branch' }
@@ -1124,7 +1123,8 @@ class SourceControllerTest < ActionDispatch::IntegrationTest
     assert_no_xml_tag tag: 'path', attributes: { project: 'home:tom:projecta' }
 
     # change back using remote project
-    put '/source/home:tom:projectB/_meta', params: "<project name='home:tom:projectB'> <title/> <description/> <repository name='repoB'> <path project='RemoteInstance:home:tom:projectA' repository='repoA' /> </repository> </project>"
+    put '/source/home:tom:projectB/_meta',
+        params: "<project name='home:tom:projectB'> <title/> <description/> <repository name='repoB'> <path project='RemoteInstance:home:tom:projectA' repository='repoA' /> </repository> </project>"
     assert_response :success
     get '/source/home:tom:projectB/_meta'
     assert_response :success
@@ -1134,7 +1134,8 @@ class SourceControllerTest < ActionDispatch::IntegrationTest
     if @ENABLE_BROKEN_TEST
       # FIXME: the case insensitive database select is not okay.
       # and switch letter again
-      put '/source/home:tom:projectB/_meta', params: "<project name='home:tom:projectB'> <title/> <description/> <repository name='repoB'> <path project='RemoteInstance:home:tom:projecta' repository='repoA' /> </repository> </project>"
+      put '/source/home:tom:projectB/_meta',
+          params: "<project name='home:tom:projectB'> <title/> <description/> <repository name='repoB'> <path project='RemoteInstance:home:tom:projecta' repository='repoA' /> </repository> </project>"
       assert_response 404
       assert_xml_tag tag: 'status', attributes: { code: 'unknown_project' }
       get '/source/home:tom:projectB/_meta'
@@ -1158,10 +1159,10 @@ class SourceControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     put '/source/home:tom:projectC/_meta', params: "<project name='home:tom:projectC'> <title/> <description/> <repository name='repoC'> <path project='home:tom:projectB' repository='repoB' /> </repository> </project>"
     assert_response :success
-    put '/source/home:tom:projectD/_meta', params: "<project name='home:tom:projectD'> <title/> <description/> <repository name='repoD'> " \
-                                                   " <path project='home:tom:projectA' repository='repoA' />" \
-                                                   " <path project='home:tom:projectB' repository='repoB' />" \
-                                                   " <path project='home:tom:projectC' repository='repoC' />" \
+    put '/source/home:tom:projectD/_meta', params: "<project name='home:tom:projectD'> <title/> <description/> <repository name='repoD'>  " \
+                                                   "<path project='home:tom:projectA' repository='repoA' /> " \
+                                                   "<path project='home:tom:projectB' repository='repoB' /> " \
+                                                   "<path project='home:tom:projectC' repository='repoC' />" \
                                                    '</repository> </project>'
     assert_response :success
     # delete a repo
@@ -1245,7 +1246,8 @@ class SourceControllerTest < ActionDispatch::IntegrationTest
     login_tom
     put '/source/home:tom:projectA/_meta', params: "<project name='home:tom:projectA'> <title/> <description/> <repository name='repoA'> <arch>i586</arch> </repository> </project>"
     assert_response :success
-    put '/source/home:tom:projectB/_meta', params: "<project name='home:tom:projectB'> <title/> <description/> <repository name='repoB'> <path project='home:tom:projectA' repository='repoA' /> <arch>i586</arch> </repository> </project>"
+    put '/source/home:tom:projectB/_meta',
+        params: "<project name='home:tom:projectB'> <title/> <description/> <repository name='repoB'> <path project='home:tom:projectA' repository='repoA' /> <arch>i586</arch> </repository> </project>"
     assert_response :success
     # delete the project including the repository
     delete '/source/home:tom:projectA'
@@ -1908,6 +1910,13 @@ class SourceControllerTest < ActionDispatch::IntegrationTest
     get '/source/kde4/kdelibs/_history?meta=1&deleted=1'
     assert_xml_tag(parent: { tag: 'revision' }, tag: 'user', content: 'fredlibs')
     assert_xml_tag(parent: { tag: 'revision' }, tag: 'comment', content: 'test deleted')
+    assert_response :success
+    # source access check via public route (critical for obs-git-lfs-ro)
+    get '/source/kde4/kdelibs?deleted=1'
+    assert_response :success
+    node = Xmlhash.parse(@response.body)
+    srcmd5 = node['srcmd5']
+    get "/public/source/kde4/kdelibs/DUMMYFILE?rev=#{srcmd5}"
     assert_response :success
 
     # list deleted packages of existing project
@@ -2722,6 +2731,46 @@ class SourceControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     login_adrian
     delete '/source/home:adrian:RT'
+    assert_response :success
+  end
+
+  def test_fork_simple_package
+    login_adrian
+    put '/source/home:adrian:IMAGES/_meta', params: "<project name='home:adrian:IMAGES'> <title/> <description/>
+          <repository name='images'>
+            <arch>i586</arch>
+            <arch>x86_64</arch>
+          </repository>
+        </project>"
+    assert_response :success
+
+    put '/source/home:adrian:IMAGES/appliance/_meta', params: "<package project='home:adrian:IMAGES' name='appliance'> <title/> <description/> <scmsync>http://localhost</scmsync> </package>"
+    assert_response :success
+
+    post '/source/home:adrian:IMAGES/appliance', params: { cmd: 'fork' }
+    assert_response 400
+    assert_xml_tag(tag: 'status', attributes: { code: 'missing_parameter' })
+
+    post '/source/home:adrian:IMAGES/appliance', params: { cmd: 'fork', scmsync: 'http://127.0.0.1' }
+    assert_response :success
+
+    get '/source/home:adrian:branches:home:adrian:IMAGES/appliance/_history'
+    assert_response :success
+    assert_no_xml_tag(tag: 'revision')
+
+    get '/source/home:adrian:branches:home:adrian:IMAGES/_meta'
+    assert_response :success
+    assert_xml_tag(tag: 'repository', attributes: { name: 'images' })
+    assert_no_xml_tag(tag: 'path')
+
+    get '/source/home:adrian:branches:home:adrian:IMAGES/appliance/_meta'
+    assert_response :success
+    assert_xml_tag(tag: 'scmsync', content: 'http://127.0.0.1')
+
+    # cleanup
+    delete '/source/home:adrian:branches:home:adrian:IMAGES'
+    assert_response :success
+    delete '/source/home:adrian:IMAGES'
     assert_response :success
   end
 
@@ -3657,7 +3706,7 @@ class SourceControllerTest < ActionDispatch::IntegrationTest
       User.session = nil
     end
     # validate request
-    br = BsRequest.all.last
+    br = BsRequest.last
     assert_equal br.state, :new
     assert_equal br.bs_request_actions.first.type, 'delete'
     assert_equal br.bs_request_actions.first.target_project, 'home:fredlibs:branches:home:Iggy'
@@ -3667,7 +3716,7 @@ class SourceControllerTest < ActionDispatch::IntegrationTest
     travel(12.days) do
       ProjectCreateAutoCleanupRequestsJob.perform_now
     end
-    assert_equal br, BsRequest.all.last
+    assert_equal br, BsRequest.last
 
     # cleanup and try again with defaults
     Configuration.stubs(:allow_user_to_create_home_project).returns(true)
@@ -3736,7 +3785,7 @@ class SourceControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
 
     get '/source/home:tom:branches:home:Iggy/_meta'
-    assert_equal({ 'name' => '10.2', 'path' => { 'project' => 'home:Iggy', 'repository' => '10.2' }, 'arch' => ['i586', 'x86_64'] }, Xmlhash.parse(@response.body)['repository'])
+    assert_equal({ 'name' => '10.2', 'path' => { 'project' => 'home:Iggy', 'repository' => '10.2' }, 'arch' => %w[i586 x86_64] }, Xmlhash.parse(@response.body)['repository'])
 
     # check source link
     get '/source/home:tom:branches:home:Iggy/TestPack/_link'
@@ -3833,7 +3882,7 @@ class SourceControllerTest < ActionDispatch::IntegrationTest
     assert_xml_tag tag: 'status', attributes: { code: 'cmd_execution_no_permission' }
 
     post '/source/home:Iggy/TestPack?cmd=set_flag&repository=10.7&arch=i586&flag=build&status=enable'
-    assert_response :success # actually I consider forbidding repositories not existant
+    assert_response :success # actually I consider forbidding repositories not existent
 
     get '/source/home:Iggy/TestPack/_meta'
     assert_not_equal original, @response.body
@@ -3871,7 +3920,7 @@ class SourceControllerTest < ActionDispatch::IntegrationTest
     assert_match(/no permission to execute command/, @response.body)
 
     post '/source/home:Iggy?cmd=set_flag&repository=10.7&arch=i586&flag=build&status=enable'
-    assert_response :success # actually I consider forbidding repositories not existant
+    assert_response :success # actually I consider forbidding repositories not existent
 
     get '/source/home:Iggy/_meta'
     assert_not_equal original, @response.body
@@ -3929,11 +3978,11 @@ class SourceControllerTest < ActionDispatch::IntegrationTest
     get '/source/home:Iggy/TestPack/_meta'
     assert_not_equal original, @response.body
 
-    # non existant repos should not change anything
+    # non existent repos should not change anything
     original = @response.body
 
     post '/source/home:Iggy/TestPack?cmd=remove_flag&repository=10.7&arch=x86_64&flag=debuginfo'
-    assert_response :success # actually I consider forbidding repositories not existant
+    assert_response :success # actually I consider forbidding repositories not existent
 
     get '/source/home:Iggy/TestPack/_meta'
     assert_equal original, @response.body
@@ -3973,11 +4022,11 @@ class SourceControllerTest < ActionDispatch::IntegrationTest
     get '/source/home:Iggy/_meta'
     assert_not_equal original, @response.body
 
-    # non existant repos should not change anything
+    # non existent repos should not change anything
     original = @response.body
 
     post '/source/home:Iggy?cmd=remove_flag&repository=10.7&arch=x86_64&flag=debuginfo'
-    assert_response :success # actually I consider forbidding repositories not existant
+    assert_response :success # actually I consider forbidding repositories not existent
 
     get '/source/home:Iggy/_meta'
     assert_equal original, @response.body
@@ -4270,5 +4319,4 @@ class SourceControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
   end
 end
-# rubocop:enable Layout/LineLength
 # rubocop:enable Metrics/ClassLength

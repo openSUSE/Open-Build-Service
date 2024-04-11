@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe BsRequestOverviewAvatarsComponent, type: :component do
   describe '#package_avatar_objects' do
     let(:user) { create(:user, login: 'King') }
@@ -18,7 +16,7 @@ RSpec.describe BsRequestOverviewAvatarsComponent, type: :component do
         end
 
         it 'renders the maintainers of the package' do
-          expect(rendered_content).to have_selector('img[title="Bob"]', count: 1)
+          expect(rendered_content).to have_css('img[title="Bob"]', count: 1)
         end
       end
 
@@ -32,7 +30,7 @@ RSpec.describe BsRequestOverviewAvatarsComponent, type: :component do
           end
 
           it 'renders the maintainers of the project' do
-            expect(rendered_content).to have_selector('img[title="Bob"]', count: 1)
+            expect(rendered_content).to have_css('img[title="Bob"]', count: 1)
           end
         end
 
@@ -42,7 +40,7 @@ RSpec.describe BsRequestOverviewAvatarsComponent, type: :component do
           end
 
           it 'do not render a maintainer' do
-            expect(rendered_content).to have_selector('img[title="Bob"]', count: 0)
+            expect(rendered_content).to have_css('img[title="Bob"]', count: 0)
           end
         end
       end

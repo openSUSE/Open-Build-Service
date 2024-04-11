@@ -1,7 +1,7 @@
 class ConvertNotificationsEventPayloadToJson < ActiveRecord::Migration[5.1]
   def self.up
     Notification20170831143534.transaction do
-      Notification20170831143534.all.find_each do |notification|
+      Notification20170831143534.find_each do |notification|
         json = yaml_to_json(notification.event_payload)
         notification.update!(event_payload: json)
       end
@@ -34,19 +34,19 @@ end
 # Hash extension is used to run force_encoding against each string value in the hash
 # in data migration to convert yaml to json serialisation for event payloads
 class Hash
-  def traverse(&block)
-    traverse_value(self, &block)
+  def traverse(&)
+    traverse_value(self, &)
   end
 
   private
 
-  def traverse_value(value, &block)
+  def traverse_value(value, &)
     case value
     when Hash
-      value.each { |key, sub_value| value[key] = traverse_value(sub_value, &block) }
+      value.each { |key, sub_value| value[key] = traverse_value(sub_value, &) }
 
     when Array
-      value.map { |element| traverse_value(element, &block) }
+      value.map { |element| traverse_value(element, &) }
 
     else
       yield(value)

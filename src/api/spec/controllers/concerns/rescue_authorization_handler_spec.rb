@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 class FakeObject; end # rubocop:disable Lint/EmptyClass
 
 class FakePolicy < ApplicationPolicy
@@ -8,7 +6,6 @@ class FakePolicy < ApplicationPolicy
   end
 end
 
-# rubocop:disable RSpec/FilePath
 RSpec.describe ApplicationController do
   let(:user) { create(:confirmed_user) }
 
@@ -55,4 +52,3 @@ RSpec.describe ApplicationController do
     end
   end
 end
-# rubocop:enable RSpec/FilePath

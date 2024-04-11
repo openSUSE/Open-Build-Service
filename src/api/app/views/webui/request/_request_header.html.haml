@@ -1,4 +1,4 @@
-- badge_state = BsRequestStateBadgeComponent.new(bs_request: bs_request, css_class: 'ms-2')
+- badge_state = BsRequestStateBadgeComponent.new(state: bs_request.state, css_class: 'ms-2')
 
 .card-title.d-flex.justify-content-between.mb-2.pt-4.px-4
   %h3
@@ -6,10 +6,18 @@
     -# state badge
     %small
       = render badge_state
+      %span.ms-2
+        = render ReportsNoticeComponent.new(reportable: bs_request, user: User.session)
+
   -# watch button
   - if User.session
     .d-inline.align-bottom.ms-1#watchlist-icon-wrapper
-      = render WatchlistIconComponent.new(user: User.session!, bs_request: bs_request, current_object: bs_request)
+      = render WatchlistIconComponent.new(user: User.session!,
+                                          bs_request: bs_request,
+                                          current_object: bs_request,
+                                          bs_requests: bs_requests,
+                                          packages: packages,
+                                          projects: projects)
 
 -# author + datetime + (if superseding -> "Superseds something")
 .card-text.px-4.pb-4
@@ -22,7 +30,7 @@
     -# superseded
     - if bs_request.superseded_by.present?
       %li
-        %mark.text-nowrap.text-light{ class: "bg-#{badge_state.decode_state_color(bs_request.state)}" } Superseded
+        %mark.text-nowrap{ class: "text-bg-#{badge_state.decode_state_color}" } Superseded
         by
         = link_to "##{bs_request.superseded_by}", number: bs_request.superseded_by
     -# superseding statement
@@ -31,6 +39,7 @@
         %strong Supersedes
         - bs_request.superseding.each do |supersed|
           = link_to "##{supersed['number']}", number: supersed['number']
+          = link_to "(changes from superseded)", request_changes_path(bs_request, diff_to_superseded: supersed)
     -# staging statement
     - if staging_status
       - staging_project = staging_status[:staging_project]
@@ -51,11 +60,20 @@
         %mark.text-dark.alert-warning.ps-2.pe-2.text-nowrap{ title: bs_request.accept_at }
           auto accepted
           = render TimeComponent.new(time: bs_request.accept_at)
+    -# Maintenance Incident Request
+    - if bs_request.maintenance_incident_request?
+      %li
+        This is a
+        %mark.text-light.bg-maintenance.text-nowrap.text Maintenance Incident
+    -# Maintenance Release Request
+    - if bs_request.maintenance_release_request?
+      %li
+        This is a
+        %mark.text-light.bg-maintenance.text-nowrap.text Maintenance Release
+        request
   .mt-4
     -# action description, prev + dropdown select + next
-        TODO: once we support all types of actions, we have to send @actions instead of @supported_actions
-    = render partial: 'actions_details', locals: { bs_request: bs_request, action: action, active_action: active_action,
+    = render partial: 'actions_details', locals: { bs_request: bs_request, action: action,
                                                     prev_action: prev_action, next_action: next_action,
-                                                    actions: supported_actions, actions_count: supported_actions.count,
-                                                    diff_to_superseded_id: diff_to_superseded_id, diff_limit: diff_limit,
+                                                    actions: actions, diff_to_superseded_id: diff_to_superseded_id,
                                                     page_name: page_name }

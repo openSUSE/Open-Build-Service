@@ -27,8 +27,8 @@ FactoryBot.define do
     end
 
     after(:create) do |project, evaluator|
-      LinkedProject.create(project: project, linked_db_project: evaluator.link_to) if evaluator.link_to.is_a?(Project)
-      LinkedProject.create(project: project, linked_remote_project_name: evaluator.link_to) if evaluator.link_to.is_a?(String)
+      create(:linked_project, project: project, linked_db_project: evaluator.link_to) if evaluator.link_to.is_a?(Project)
+      create(:linked_project, project: project, linked_remote_project_name: evaluator.link_to) if evaluator.link_to.is_a?(String)
 
       project.config.save({ user: 'factory bot' }, evaluator.project_config) if evaluator.project_config
 
@@ -52,13 +52,11 @@ FactoryBot.define do
     factory :project_with_package do
       transient do
         package_name { nil }
-        create_patchinfo { false }
       end
 
       after(:create) do |project, evaluator|
         new_package = create(:package, { project: project, name: evaluator.package_name }.compact)
         project.packages << new_package
-        Patchinfo.new.create_patchinfo(project.name, new_package.name, comment: 'Fake comment', force: true) if evaluator.create_patchinfo
       end
     end
 
@@ -68,7 +66,6 @@ FactoryBot.define do
         package_title { nil }
         package_description { nil }
         package_count { 2 }
-        create_patchinfo { false }
       end
 
       after(:create) do |project, evaluator|
@@ -89,7 +86,6 @@ FactoryBot.define do
             description: package_description
           }.compact)
           project.packages << new_package
-          Patchinfo.new.create_patchinfo(project.name, new_package.name, comment: 'Fake comment', force: true) if evaluator.create_patchinfo
         end
       end
     end
@@ -109,6 +105,7 @@ FactoryBot.define do
     factory :project_with_repository do
       after(:create) do |project|
         create(:repository, project: project, architectures: ['i586'])
+        project.store if CONFIG['global_write_through']
       end
     end
 
@@ -128,11 +125,11 @@ FactoryBot.define do
       end
     end
 
-    factory :maintenance_project do
+    factory :maintenance_project do # openSUSE:Maintenance
       kind { 'maintenance' }
 
       transient do
-        target_project { nil }
+        target_project { nil }      # maintains -> update projects (for example: openSUSE:Leap:15.4:Update)
         create_patchinfo { false }
       end
 
@@ -143,19 +140,22 @@ FactoryBot.define do
       after(:create) do |project, evaluator|
         create(:maintenance_project_attrib, project: project)
         if evaluator.target_project
-          create(:maintained_project, project: evaluator.target_project, maintenance_project: project)
+          target_projects = if evaluator.target_project.is_a?(Array)
+                              evaluator.target_project
+                            else
+                              [evaluator.target_project]
+                            end
           CONFIG['global_write_through'] ? project.store : project.save!
+          target_projects.each do |tp|
+            create(:maintained_project, project: tp, maintenance_project: project)
+          end
         end
-        if evaluator.create_patchinfo
-          old_user = User.session
-          User.session = evaluator.maintainer
-          Patchinfo.new.create_patchinfo(project.name, nil, comment: 'Fake comment', force: true)
-          User.session = old_user
-        end
+
+        evaluator.maintainer.run_as { create(:patchinfo, project_name: project.name, comment: 'Fake comment', force: true) } if evaluator.create_patchinfo
       end
 
       factory :maintenance_project_with_packages do
-        packages { [create(:package_with_file)] }
+        packages { create_list(:package_with_file, 1) }
       end
     end
 
@@ -163,20 +163,26 @@ FactoryBot.define do
       kind { 'maintenance_release' }
 
       transient do
-        target_project { create(:project_with_repository) }
+        maintained_project { create(:project_with_repository) }
+        maintenance_project { nil }
       end
 
       after(:create) do |update_project, evaluator|
+        # i.e. Set OBS:Maintained attribute on the openSUSE:Leap:15.4
         create(:maintained_attrib, project: update_project)
-        create(:update_project_attrib, project: evaluator.target_project, update_project: update_project)
-        if evaluator.target_project
-          create(:build_flag, status: 'disable', project: evaluator.target_project)
-          create(:publish_flag, status: 'disable', project: evaluator.target_project)
-          update_project.projects_linking_to << evaluator.target_project
-          CONFIG['global_write_through'] ? update_project.store : update_project.save!
-          new_repository = create(:repository, project: update_project, architectures: ['i586'])
-          create(:path_element, repository: new_repository, link: evaluator.target_project.repositories.first)
-        end
+
+        # i.e. Set OBS:UpdateProject attribute with value openSUSE:Leap:15.4:Update on openSUSE:Leap:15.4
+        create(:update_project_attrib, project: evaluator.maintained_project, update_project: update_project)
+
+        # Set the relationship between the update project and the maintenance project
+        create(:maintained_project, project: update_project, maintenance_project: evaluator.maintenance_project) if evaluator.maintenance_project
+
+        create(:build_flag, status: 'disable', project: evaluator.maintained_project)
+        create(:publish_flag, status: 'disable', project: evaluator.maintained_project)
+        update_project.projects_linking_to << evaluator.maintained_project
+        CONFIG['global_write_through'] ? update_project.store : update_project.save!
+        new_repository = create(:repository, project: update_project, architectures: ['i586'])
+        create(:path_element, repository: new_repository, link: evaluator.maintained_project.repositories.first)
       end
     end
 

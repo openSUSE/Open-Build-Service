@@ -1,14 +1,14 @@
 .CodeRay, .CodeRay .change {
   background: $card-bg;
-  color: $body-color;
+  color: var(--bs-body-color);
 }
 .CodeRay pre { margin: 0 }
 span.CodeRay { white-space: pre }
 
 .CodeRay .line-numbers {
   display: inline-block;
-  background: opacify( mix( $card-bg, opacify( $card-cap-bg, 1 ), ( 1 - alpha( $card-cap-bg ) ) * 100% ), 1 );
-  border-right: $card-border-width solid $card-border-color;
+  background: $card-cap-bg;
+  border-right: var(--bs-border-width) solid var(--bs-border-color);
 }
 
 .CodeRay .line-numbers pre {

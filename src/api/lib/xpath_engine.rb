@@ -1,4 +1,3 @@
-# rubocop:disable Layout/LineLength
 # rubocop:disable Metrics/MethodLength
 class XpathEngine
   require 'rexml/parsers/xpathparser'
@@ -221,7 +220,9 @@ class XpathEngine
         'review/@by_package' => { cpart: 'r.by_package', joins: 'LEFT JOIN reviews r ON r.bs_request_id = bs_requests.id' },
         'review/@when' => { cpart: 'bs_requests.updated_at', joins: 'LEFT JOIN reviews r ON r.bs_request_id = bs_requests.id' },
         'review/@state' => { cpart: 'r.state', joins: 'LEFT JOIN reviews r ON r.bs_request_id = bs_requests.id' },
-        'review/history/@when' => { cpart: 'he.created_at', joins: "LEFT JOIN reviews r ON r.bs_request_id = bs_requests.id LEFT JOIN history_elements he ON (he.op_object_id = r.id AND he.type IN (\"#{HistoryElement::Review.descendants.join('","')}\") )" },
+        'review/history/@when' => { cpart: 'he.created_at',
+                                    joins: 'LEFT JOIN reviews r ON r.bs_request_id = bs_requests.id ' \
+                                           "LEFT JOIN history_elements he ON (he.op_object_id = r.id AND he.type IN (\"#{HistoryElement::Review.descendants.join('","')}\") )" },
         'history/@when' => { cpart: 'he.created_at', joins: "LEFT JOIN history_elements he ON (he.op_object_id = bs_requests.id AND he.type IN (\"#{HistoryElement::Request.descendants.join('","')}\") )" },
         'history/@who' => { cpart: 'husers.login', joins: ["LEFT JOIN history_elements he ON (he.op_object_id = bs_requests.id AND he.type IN (\"#{HistoryElement::Request.descendants.join('","')}\") )",
                                                            'LEFT JOIN users husers ON he.user_id = husers.id'] },
@@ -233,7 +234,7 @@ class XpathEngine
       }
     }
 
-    @operators = [:eq, :and, :or, :neq, :gt, :lt, :gteq, :lteq]
+    @operators = %i[eq and or neq gt lt gteq lteq]
 
     @base_table = ''
     @conditions = []
@@ -348,7 +349,7 @@ class XpathEngine
 
       @joins = ['LEFT JOIN repositories AS release_repositories ON binary_releases.repository_id = release_repositories.id',
                 'LEFT JOIN projects AS release_projects ON release_repositories.db_project_id = release_projects.id',
-                'LEFT join product_media on (product_media.repository_id=release_repositories.id AND product_media.name=binary_releases.medium COLLATE utf8_unicode_ci)',
+                'LEFT join product_media on (product_media.repository_id=release_repositories.id AND product_media.name=binary_releases.medium COLLATE utf8mb4_unicode_ci)',
                 'LEFT join products product_ga on product_ga.id=product_media.product_id ',
                 'LEFT join product_update_repositories product_update_repository on product_update_repository.repository_id=release_repositories.id',
                 'LEFT join products product_update on product_update.id=product_update_repository.product_id '] << @joins
@@ -377,7 +378,7 @@ class XpathEngine
       case token
       when :function
         fname = stack.shift
-        fname_int = 'xpath_func_' + fname.tr('-', '_')
+        fname_int = "xpath_func_#{fname.tr('-', '_')}"
         raise IllegalXpathError, "unknown xpath function '#{fname}'" unless respond_to?(fname_int)
 
         __send__(fname_int, root, *stack.shift)
@@ -393,7 +394,7 @@ class XpathEngine
             parse_predicate(root, stack[0])
             stack.shift
           elsif qtype.nil? || qtype == :qname
-            # just a plain existens test
+            # just a plain existence test
             xpath_func_boolean(root, stack)
           else
             parse_predicate(root, qtype)
@@ -406,7 +407,7 @@ class XpathEngine
         end
       when *@operators
         opname = token.to_s
-        opname_int = 'xpath_op_' + opname
+        opname_int = "xpath_op_#{opname}"
         raise IllegalXpathError, "unhandled xpath operator '#{opname}'" unless respond_to?(opname_int)
 
         __send__(opname_int, root, *stack)
@@ -419,7 +420,7 @@ class XpathEngine
     # logger.debug "-------------- predicate finished ----------"
   end
 
-  def evaluate_expr(expr, root, escape = false)
+  def evaluate_expr(expr, root, escape: false)
     table = @base_table
     a = []
     until expr.empty?
@@ -434,7 +435,7 @@ class XpathEngine
       when :attribute
         expr.shift # :qname token
         expr.shift # namespace
-        a << ('@' + expr.shift)
+        a << ("@#{expr.shift}")
       when :literal
         value = (escape ? escape_for_like(expr.shift) : expr.shift)
         return '' if @last_key && @attribs[table][@last_key][:empty]
@@ -472,11 +473,11 @@ class XpathEngine
     str.gsub(/([_%])/, '\\\\\1')
   end
 
-  def xpath_op_eq(root, lv, rv)
-    # logger.debug "-- xpath_op_eq(#{lv.inspect}, #{rv.inspect}) --"
+  def xpath_op_eq(root, left_value, right_value)
+    # logger.debug "-- xpath_op_eq(#{left_value.inspect}, #{right_value.inspect}) --"
 
-    lval = evaluate_expr(lv, root)
-    rval = evaluate_expr(rv, root)
+    lval = evaluate_expr(left_value, root)
+    rval = evaluate_expr(right_value, root)
 
     condition = if lval.nil? || rval.nil?
                   '0'
@@ -488,11 +489,11 @@ class XpathEngine
     @conditions << condition
   end
 
-  def xpath_op_neq(root, lv, rv)
-    # logger.debug "-- xpath_op_neq(#{lv.inspect}, #{rv.inspect}) --"
+  def xpath_op_neq(root, left_value, right_value)
+    # logger.debug "-- xpath_op_neq(#{left_value.inspect}, #{right_value.inspect}) --"
 
-    lval = evaluate_expr(lv, root)
-    rval = evaluate_expr(rv, root)
+    lval = evaluate_expr(left_value, root)
+    rval = evaluate_expr(right_value, root)
 
     condition = if lval.nil? || rval.nil?
                   '1'
@@ -505,39 +506,39 @@ class XpathEngine
     @conditions << condition
   end
 
-  def xpath_op_gt(root, lv, rv)
-    lval = evaluate_expr(lv, root)
-    rval = evaluate_expr(rv, root)
+  def xpath_op_gt(root, left_value, right_value)
+    lval = evaluate_expr(left_value, root)
+    rval = evaluate_expr(right_value, root)
 
     @conditions << "#{lval} > #{rval}"
   end
 
-  def xpath_op_gteq(root, lv, rv)
-    lval = evaluate_expr(lv, root)
-    rval = evaluate_expr(rv, root)
+  def xpath_op_gteq(root, left_value, right_value)
+    lval = evaluate_expr(left_value, root)
+    rval = evaluate_expr(right_value, root)
 
     @conditions << "#{lval} >= #{rval}"
   end
 
-  def xpath_op_lt(root, lv, rv)
-    lval = evaluate_expr(lv, root)
-    rval = evaluate_expr(rv, root)
+  def xpath_op_lt(root, left_value, right_value)
+    lval = evaluate_expr(left_value, root)
+    rval = evaluate_expr(right_value, root)
 
     @conditions << "#{lval} < #{rval}"
   end
 
-  def xpath_op_lteq(root, lv, rv)
-    lval = evaluate_expr(lv, root)
-    rval = evaluate_expr(rv, root)
+  def xpath_op_lteq(root, left_value, right_value)
+    lval = evaluate_expr(left_value, root)
+    rval = evaluate_expr(right_value, root)
 
     @conditions << "#{lval} <= #{rval}"
   end
 
-  def xpath_op_and(root, lv, rv)
-    # logger.debug "-- xpath_op_and(#{lv.inspect}, #{rv.inspect}) --"
-    parse_predicate(root, lv)
+  def xpath_op_and(root, left_value, right_value)
+    # logger.debug "-- xpath_op_and(#{left_value.inspect}, #{right_value.inspect}) --"
+    parse_predicate(root, left_value)
     lv_cond = @conditions.pop
-    parse_predicate(root, rv)
+    parse_predicate(root, right_value)
     rv_cond = @conditions.pop
 
     condition = "((#{lv_cond}) AND (#{rv_cond}))"
@@ -546,12 +547,12 @@ class XpathEngine
     @conditions << condition
   end
 
-  def xpath_op_or(root, lv, rv)
-    # logger.debug "-- xpath_op_or(#{lv.inspect}, #{rv.inspect}) --"
+  def xpath_op_or(root, left_value, right_value)
+    # logger.debug "-- xpath_op_or(#{left_value.inspect}, #{right_value.inspect}) --"
 
-    parse_predicate(root, lv)
+    parse_predicate(root, left_value)
     lv_cond = @conditions.pop
-    parse_predicate(root, rv)
+    parse_predicate(root, right_value)
     rv_cond = @conditions.pop
 
     condition = if lv_cond == '0'
@@ -570,7 +571,7 @@ class XpathEngine
     # logger.debug "-- xpath_func_contains(#{haystack.inspect}, #{needle.inspect}) --"
 
     hs = evaluate_expr(haystack, root)
-    ne = evaluate_expr(needle, root, true)
+    ne = evaluate_expr(needle, root, escape: true)
 
     condition = if hs.nil? || ne.nil?
                   '0'
@@ -607,7 +608,7 @@ class XpathEngine
 
     case expr.first
     when :attribute
-      # existens check to an attribute
+      # existence check to an attribute
       # (is defined as opposite of boolean())
       #  https://www.w3.org/TR/xpath-functions-31/#func-not
       cond = evaluate_expr(expr, root)
@@ -627,11 +628,11 @@ class XpathEngine
     @conditions << condition
   end
 
-  def xpath_func_starts_with(root, x, y)
-    # logger.debug "-- xpath_func_starts_with(#{x.inspect}, #{y.inspect}) --"
+  def xpath_func_starts_with(root, left_value, right_value)
+    # logger.debug "-- xpath_func_starts_with(#{left_value.inspect}, #{right_value.inspect}) --"
 
-    s1 = evaluate_expr(x, root)
-    s2 = evaluate_expr(y, root, true)
+    s1 = evaluate_expr(left_value, root)
+    s2 = evaluate_expr(right_value, root, escape: true)
 
     condition = "#{s1} LIKE CONCAT(#{s2},'%')"
     # logger.debug "-- condition: [#{condition}]"
@@ -639,11 +640,11 @@ class XpathEngine
     @conditions << condition
   end
 
-  def xpath_func_ends_with(root, x, y)
-    # logger.debug "-- xpath_func_ends_with(#{x.inspect}, #{y.inspect}) --"
+  def xpath_func_ends_with(root, left_value, right_value)
+    # logger.debug "-- xpath_func_ends_with(#{left_value.inspect}, #{right_value.inspect}) --"
 
-    s1 = evaluate_expr(x, root)
-    s2 = evaluate_expr(y, root, true)
+    s1 = evaluate_expr(left_value, root)
+    s2 = evaluate_expr(right_value, root, escape: true)
 
     condition = "#{s1} LIKE CONCAT('%',#{s2})"
     # logger.debug "-- condition: [#{condition}]"
@@ -651,5 +652,4 @@ class XpathEngine
     @conditions << condition
   end
 end
-# rubocop:enable Layout/LineLength
 # rubocop:enable Metrics/MethodLength

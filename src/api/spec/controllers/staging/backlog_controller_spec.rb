@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe Staging::BacklogController do
   render_views
 
@@ -31,7 +29,7 @@ RSpec.describe Staging::BacklogController do
       it { expect(response).to have_http_status(:success) }
 
       it 'returns the backlog xml' do
-        expect(response.body).to have_selector('backlog > request', count: 1)
+        expect(response.body).to have_css('backlog > request', count: 1)
       end
     end
 
@@ -53,7 +51,7 @@ RSpec.describe Staging::BacklogController do
       it { expect(response).to have_http_status(:not_found) }
 
       it 'responds_with_an_error' do
-        expect(response.body).to have_selector('status > summary', text: "Project #{other_project} doesn't have an associated Staging Workflow")
+        expect(response.body).to have_css('status > summary', text: "Project #{other_project} doesn't have an associated Staging Workflow")
       end
     end
   end

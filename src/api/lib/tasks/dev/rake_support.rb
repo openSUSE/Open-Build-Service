@@ -15,7 +15,7 @@ module RakeSupport
 
   def self.copy_example_file(example_file)
     if File.exist?(example_file) && !ENV['FORCE_EXAMPLE_FILES']
-      example_file = File.join(File.expand_path(File.dirname(__FILE__) + '/../..'), example_file)
+      example_file = File.join(File.expand_path("#{File.dirname(__FILE__)}/../.."), example_file)
       puts "WARNING: You already have the config file #{example_file}, make sure it works with docker"
     else
       puts "Creating config/#{example_file} from config/#{example_file}.example"
@@ -50,6 +50,12 @@ module RakeSupport
     create(:event_subscription_comment_for_request, channel: :web, user: user, receiver_role: 'target_maintainer')
     create(:event_subscription_relationship_create, channel: :web, user: user, receiver_role: 'any_role')
     create(:event_subscription_relationship_delete, channel: :web, user: user, receiver_role: 'any_role')
+    # TODO: Remove `Event::CreateReport` after all existing records are migrated to the new STI classes
+    create(:event_subscription_create_report, channel: :web, user: user)
+    create(:event_subscription_report_for_project, channel: :web, user: user)
+    create(:event_subscription_report_for_package, channel: :web, user: user)
+    create(:event_subscription_report_for_comment, channel: :web, user: user)
+    create(:event_subscription_report_for_user, channel: :web, user: user)
 
     user.groups.each do |group|
       create(:event_subscription_request_created, channel: :web, user: nil, group: group, receiver_role: 'target_maintainer')

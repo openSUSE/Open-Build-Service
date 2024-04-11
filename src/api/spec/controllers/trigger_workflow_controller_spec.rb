@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe TriggerWorkflowController do
   render_views
 
@@ -29,8 +27,7 @@ RSpec.describe TriggerWorkflowController do
         allow(TriggerControllerService::TokenExtractor).to receive(:new).and_return(token_extractor_instance)
         allow(token_extractor_instance).to receive(:call).and_return(token)
         allow(Octokit::Client).to receive(:new).and_return(octokit_client)
-        allow(octokit_client).to receive(:content).and_return({ download_url: 'https://google.com' })
-        allow(Down).to receive(:download).and_raise(Down::Error, 'Beep Boop, something is wrong')
+        allow(octokit_client).to receive(:content).and_raise(Octokit::NotFound)
         request.headers['ACCEPT'] = '*/*'
         request.headers['CONTENT_TYPE'] = 'application/json'
         request.headers['HTTP_X_GITHUB_EVENT'] = 'pull_request'
@@ -40,8 +37,7 @@ RSpec.describe TriggerWorkflowController do
       it { expect(response).to have_http_status(:not_found) }
 
       it "displays a user-friendly error message in the response's body" do
-        expect(response.body).to include(".obs/workflows.yml could not be downloaded from the SCM branch/commit main.\nIs the configuration file in the expected place? " \
-                                         "Check #{Workflows::YAMLDownloader::DOCUMENTATION_LINK}\nBeep Boop, something is wrong")
+        expect(response.body).to include('.obs/workflows.yml could not be downloaded from the SCM branch/commit main: Octokit::NotFound')
       end
 
       it { expect(WorkflowRun.count).to eq(1) }
@@ -90,6 +86,7 @@ RSpec.describe TriggerWorkflowController do
       before do
         allow(TriggerControllerService::TokenExtractor).to receive(:new).and_return(token_extractor_instance)
         allow(token_extractor_instance).to receive(:call).and_return(nil)
+        request.headers['HTTP_X_GITHUB_EVENT'] = 'pull_request'
         post :create, params: { format: :json }
       end
 
@@ -136,7 +133,7 @@ RSpec.describe TriggerWorkflowController do
         allow(TriggerControllerService::TokenExtractor).to receive(:new).and_return(token_extractor_instance)
         allow(token_extractor_instance).to receive(:call).and_return(token)
         allow(Octokit::Client).to receive(:new).and_return(octokit_client)
-        allow(octokit_client).to receive(:content).and_return({ download_url: 'https://google.com' })
+        allow(octokit_client).to receive(:content).and_return({ content: Base64.encode64('Test content') })
         allow(Down).to receive(:download).and_raise(Down::Error, 'Beep Boop, something is wrong')
         request.headers['ACCEPT'] = '*/*'
         request.headers['CONTENT_TYPE'] = 'application/json'
@@ -166,7 +163,7 @@ RSpec.describe TriggerWorkflowController do
       end
 
       it { expect(response).to have_http_status(:bad_request) }
-      it { expect(WorkflowRun.count).to eq(1) }
+      it { expect(WorkflowRun.count).to eq(0) }
 
       it 'returns an error message in the response body' do
         expect(response.body).to eql("<status code=\"bad_request\">\n  <summary>This SCM event is not supported</summary>\n</status>\n")
@@ -249,22 +246,7 @@ RSpec.describe TriggerWorkflowController do
     context 'no validation errors' do
       let(:token_extractor_instance) { instance_double(TriggerControllerService::TokenExtractor) }
       let(:token) { build_stubbed(:workflow_token, executor: build_stubbed(:confirmed_user)) }
-      let(:github_payload) do
-        {
-          action: 'opened',
-          pull_request: {
-            head: {
-              repo: { full_name: 'username/test_repo' }
-            },
-            base: {
-              ref: 'main',
-              repo: { full_name: 'rubhanazeem/hello_world' }
-            }
-          },
-          number: 4,
-          sender: { url: 'https://api.github.com' }
-        }
-      end
+      let(:github_payload) { file_fixture('request_payload_github_pull_request_opened.json').read }
 
       before do
         allow(token).to receive(:call).and_return([])
@@ -276,7 +258,7 @@ RSpec.describe TriggerWorkflowController do
         request.headers['CONTENT_TYPE'] = 'application/json'
         request.headers['HTTP_X_GITHUB_EVENT'] = 'pull_request'
 
-        post :create, body: github_payload.to_json
+        post :create, body: github_payload
       end
 
       it { expect(response).to have_http_status(:success) }
@@ -284,6 +266,12 @@ RSpec.describe TriggerWorkflowController do
 
       it { expect(WorkflowRun.count).to eq(1) }
       it { expect(WorkflowRun.last.status).to eq('success') }
+      it { expect(WorkflowRun.last.repository_full_name).to eq('iggy/hello_world') }
+      it { expect(WorkflowRun.last.hook_event).to eq('pull_request') }
+      it { expect(WorkflowRun.last.hook_action).to eq('opened') }
+      it { expect(WorkflowRun.last.scm_vendor).to eq('github') }
+      it { expect(WorkflowRun.last.generic_event_type).to eq('pull_request') }
+      it { expect(WorkflowRun.last.event_source_name).to eq('1') }
       it { expect(response.body).to include('Ok') }
     end
 

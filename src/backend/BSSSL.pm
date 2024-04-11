@@ -40,6 +40,16 @@ sub initssleay {
   $ssleay_inited = 1;
 }
 
+sub die_with_error_stack {
+  my ($msg) = @_;
+  my @errs;
+  my $err;
+  while ($err = Net::SSLeay::ERR_get_error()) {
+    push @errs, Net::SSLeay::ERR_error_string($err);
+  }
+  die("$msg: ".join(', ', @errs)."\n");
+}
+
 sub newctx {
   my (%opts) = @_;
   initssleay() unless $ssleay_inited;
@@ -59,7 +69,9 @@ sub newctx {
     Net::SSLeay::EC_KEY_free($ecdh);
   }
   if ($opts{'verify_file'} || $opts{'verify_dir'}) {
-    Net::SSLeay::CTX_load_verify_locations($ctx, $opts{'verify_file'} || '', $opts{'verify_dir'} || '') || Net::SSLeay::die_now("CTX_load_verify_locations failed\n");
+    Net::SSLeay::CTX_load_verify_locations($ctx, $opts{'verify_file'} || '', $opts{'verify_dir'} || '') || die_with_error_stack("CTX_load_verify_locations failed");
+  } elsif (!defined($opts{'verify_file'}) && !defined($opts{'verify_dir'})) {
+    Net::SSLeay::CTX_set_default_verify_paths($ctx) || die_with_error_stack("CTX_set_default_verify_paths failed");
   }
   return $ctx;
 }
@@ -82,6 +94,59 @@ sub tossl {
   tie(*{\*S}, 'BSSSL', \*S, @_);
 }
 
+sub ssl_iseof {
+  my ($ssl, $noselect, $socket) = @_;
+  my $fn = Net::SSLeay::get_fd($ssl);
+  return 0 unless defined $fn;
+  if (!$noselect) {
+    my $vec = '';
+    vec($vec, $fn, 1) = 1;
+    my $r = select($vec, undef, undef, 0);
+    if (!defined($r) || $r < 0) {
+      warn("select: $!\n");
+      return 1;
+    }
+    return 0 unless $r;
+  }
+  # sigh. we need to find a better way to call recv on the file descriptor
+  my $fd = $socket;
+  return 0 unless $fd || open($fd, '<&', $fn);
+  my $buf = '';
+  my $r = recv($fd, $buf, 1, Socket::MSG_PEEK());
+  if (!defined($r)) {
+    warn("recv: $!\n");
+    close($fd) unless $socket;
+    return 1;
+  }
+  close($fd) unless $socket;
+  return length($buf) ? 0 : 1;
+}
+
+# this assumes the socket is in non-block mode
+sub ssl_connect_with_timeout {
+  my ($ssl, $socket, $timeout) = @_;
+  $timeout += time();
+  while (1) {
+    my $r = Net::SSLeay::connect($ssl);
+    return if $r > 0;
+    my $code = Net::SSLeay::get_error($ssl, $r);
+    my $now = time();
+    die("SSL_connect timeout\n") if $now >= $timeout;
+    my $vec = '';
+    vec($vec, fileno($socket), 1) = 1;
+    if ($code == &Net::SSLeay::ERROR_WANT_WRITE) {
+      $r = select(undef, $vec, undef, $timeout - $now);
+    } elsif ($code == &Net::SSLeay::ERROR_WANT_READ) {
+      $r = select($vec, undef, undef, $timeout - $now);
+      die("SSL_connect EOF\n") if $r && ssl_iseof($ssl, 1, $socket);
+    } else {
+      die_with_error_stack("SSL_connect error ($code)");
+    }
+    die("select: $!\n") if !defined($r) || $r < 0;
+    die("SSL_connect timeout\n") if time() >= $timeout;
+  }
+}
+
 sub TIEHANDLE {
   my ($self, $socket, %opts) = @_;
 
@@ -94,37 +159,43 @@ sub TIEHANDLE {
   if ($opts{'certfile'}) {
     Net::SSLeay::use_certificate_chain_file($ssl, $opts{'certfile'}) || die("certificate $opts{'certfile'} failed to load\n");
   }
+  my $mode = $opts{'mode'} || ($opts{'keyfile'} ? 'accept' : 'connect');
   my $cert_ok;
-  if ($opts{'verify'}) {
-    my $mode = &Net::SSLeay::VERIFY_PEER;
-    $mode |= &Net::SSLeay::VERIFY_FAIL_IF_NO_PEER_CERT if $opts{'verify'} =~ /enforce_cert/;
+  my $verify = $opts{'verify'};
+  if ($verify) {
+    $verify = 'fail_unverified' if $mode eq 'connect' && $verify eq '1';	# sane default for client mode
+    my $flags = &Net::SSLeay::VERIFY_PEER;
+    $flags |= &Net::SSLeay::VERIFY_FAIL_IF_NO_PEER_CERT if $mode eq 'connect' || ($verify =~ /enforce_cert/);
     my $cb;
-    if ($opts{'verify'} !~ /fail_unverified/) {
+    if ($verify !~ /fail_unverified/) {
       $cb = sub { $cert_ok = $_[0] if !$_[0] || !defined($cert_ok); return 1 };
     } else {
-      $cb = sub { $cert_ok = $_[0] if !$_[0] || !defined($cert_ok); return $_[0] };
+      if ($mode eq 'connect') {
+	$cb = undef; # can use the default handler
+	$cert_ok = 1;
+      } else {
+        $cb = sub { $cert_ok = $_[0] if !$_[0] || !defined($cert_ok); return $_[0] };
+      }
     }
-    Net::SSLeay::set_verify($ssl, $mode, $cb);
+    Net::SSLeay::set_verify($ssl, $flags, $cb);
   }
-  my $mode = $opts{'mode'} || ($opts{'keyfile'} ? 'accept' : 'connect');
   if ($mode eq 'accept') {
     Net::SSLeay::accept($ssl) == 1 || die("SSL_accept error $!\n");
   } else {
     Net::SSLeay::set_tlsext_host_name($ssl, $opts{'sni'}) if $opts{'sni'} && defined(&Net::SSLeay::set_tlsext_host_name);
-    Net::SSLeay::connect($ssl) || die("SSL_connect error");
+    if ($opts{'nonblocking'} || $opts{'connect_timeout'}) {
+      ssl_connect_with_timeout($ssl, $socket, $opts{'connect_timeout'} || 300);
+    } else {
+      Net::SSLeay::connect($ssl) > 0 || die_with_error_stack("SSL_connect error");
+    }
   }
-  return bless [$ssl, $socket, \$cert_ok] if $opts{'verify'};
+  return bless [$ssl, $socket, \$cert_ok] if $verify;
   return bless [$ssl, $socket];
 }
 
 sub PRINT {
   my $sslr = shift;
-  my $r = 0;
-  for my $msg (@_) {
-    next unless defined $msg;
-    $r = Net::SSLeay::write($sslr->[0], $msg) or last;
-  }
-  return $r;
+  return WRITE($sslr, join($, || '', @_, $\ || ''));
 }
 
 sub READLINE {
@@ -135,9 +206,11 @@ sub READLINE {
 sub READ {
   my ($sslr, undef, $len, $offset) = @_;
   my $buf = \$_[1];
+  $! = 0;
   my ($r, $rv)  = Net::SSLeay::read($sslr->[0]);
-  if ($rv && $rv < 0) {
+  if ($rv <= 0) {
     my $code = Net::SSLeay::get_error($sslr->[0], $rv);
+    return 0 if $code == &Net::SSLeay::ERROR_WANT_READ && ssl_iseof($sslr->[0]);
     $! = POSIX::EINTR if $code == &Net::SSLeay::ERROR_WANT_READ || $code == &Net::SSLeay::ERROR_WANT_WRITE;
   }
   return undef unless defined $r;
@@ -151,7 +224,14 @@ sub READ {
 sub WRITE {
   my ($sslr, $buf, $len, $offset) = @_;
   return $len unless $len;
-  return Net::SSLeay::write($sslr->[0], substr($buf, $offset || 0, $len)) ? $len : undef;
+  $! = 0;
+  my $rv = Net::SSLeay::write($sslr->[0], substr($buf, $offset || 0, $len));
+  if ($rv <= 0) {
+    my $code = Net::SSLeay::get_error($sslr->[0], $rv);
+    $! = POSIX::EINTR if $code == &Net::SSLeay::ERROR_WANT_READ || $code == &Net::SSLeay::ERROR_WANT_WRITE;
+    return undef;
+  }
+  return $rv;
 }
 
 sub FILENO {
@@ -185,12 +265,11 @@ sub DESTROY {
 sub data_available {
   my ($sslr) = @_;
   my ($r, $rv) = Net::SSLeay::peek($sslr->[0], 1);
-  if ($rv && $rv < 0) {
+  if ($rv <= 0) {
     my $code = Net::SSLeay::get_error($sslr->[0], $rv);
     return 0 if $code == &Net::SSLeay::ERROR_WANT_READ || $code == &Net::SSLeay::ERROR_WANT_WRITE;
-    return undef;
   }
-  return defined($r) ? 1 : 0;
+  return defined($r) ? 1 : undef;
 }
 
 sub peerfingerprint {
@@ -212,9 +291,9 @@ sub subjectdn {
   }
   my $cert = Net::SSLeay::get_peer_certificate($sslr->[0]);
   return undef unless $cert;
-  my $issuer = Net::SSLeay::X509_get_issuer_name($cert);
-  return undef unless $issuer;
-  return Net::SSLeay::X509_NAME_print_ex($issuer, &Net::SSLeay::XN_FLAG_RFC2253);
+  my $subject = Net::SSLeay::X509_get_subject_name($cert);
+  return undef unless $subject;
+  return Net::SSLeay::X509_NAME_print_ex($subject, &Net::SSLeay::XN_FLAG_RFC2253);
 }
 
 1;

@@ -1,18 +1,13 @@
-require 'rails_helper'
-
 RSpec.describe BsRequestHistoryElementComponent, type: :component do
   let(:user) { create(:confirmed_user) }
+  let(:reviews) { [] }
 
   before do
-    render_inline(described_class.new(element: element))
+    render_inline(described_class.new(element: element, request_reviews_for_non_staging_projects: reviews))
   end
 
   context 'for any kind of history elements' do
     let(:element) { travel_to(1.day.ago) { create(:history_element_request_accepted, user: user) } }
-
-    it 'displays an avatar' do
-      expect(rendered_content).to have_selector("img[title='#{user.realname}']", count: 1)
-    end
 
     it 'displays the name of the user involved' do
       expect(rendered_content).to have_text("#{user.realname} (#{user.login})")
@@ -20,10 +15,6 @@ RSpec.describe BsRequestHistoryElementComponent, type: :component do
 
     it 'displays the time in words' do
       expect(rendered_content).to have_text('1 day ago')
-    end
-
-    it 'displays the element comment' do
-      expect(rendered_content).to have_selector('.timeline-item-comment', text: element.comment)
     end
   end
 
@@ -36,6 +27,14 @@ RSpec.describe BsRequestHistoryElementComponent, type: :component do
 
     it 'describes the element action' do
       expect(rendered_content).to have_text('accepted request')
+    end
+
+    context 'with pending reviews' do
+      let(:reviews) { build_list(:review, 2, state: 'new') }
+
+      it 'describes the element action and mentions dismissed reviews' do
+        expect(rendered_content).to have_text('accepted request and dismissed pending reviews')
+      end
     end
   end
 

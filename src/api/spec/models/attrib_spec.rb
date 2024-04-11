@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe Attrib do
   let(:user) { create(:confirmed_user) }
   let(:project) { create(:project) }
@@ -92,29 +90,29 @@ RSpec.describe Attrib do
       it { expect(attribute.update_with_associations).to be(false) }
 
       context 'add an issue' do
+        subject { attribute_with_type_issue.update_with_associations([], [issue]) }
+
         let(:issue_tracker) { create(:issue_tracker) }
         let(:issue) { create(:issue, issue_tracker_id: issue_tracker.id) }
         let(:attrib_type_issue) { create(:attrib_type, issue_list: true) }
         let(:attribute_with_type_issue) { build(:attrib, project: project, attrib_type: attrib_type_issue) }
-
-        subject { attribute_with_type_issue.update_with_associations([], [issue]) }
 
         it { expect(subject).to be(true) }
         it { expect { subject }.to change { attribute_with_type_issue.issues.count }.by(1) }
       end
 
       context 'add a value' do
-        let(:attrib_value) { build(:attrib_value) }
-
         subject { attribute.update_with_associations([attrib_value], []) }
+
+        let(:attrib_value) { build(:attrib_value) }
 
         it { expect(subject).to be(true) }
         it { expect { subject }.to change { attribute.values.count }.by(1) }
       end
 
       context 'values list' do
-        let(:values1) { ['blue', 'green'] }
-        let(:values2) { ['green', 'blue'] }
+        let(:values1) { %w[blue green] }
+        let(:values2) { %w[green blue] }
 
         it 'resorts attribute values' do
           expect(attribute.update_with_associations(values1, [])).to be(true)
@@ -133,14 +131,14 @@ RSpec.describe Attrib do
     end
 
     describe '#validate_value_count' do
+      subject { build(:attrib, project: project, attrib_type: attrib_type, values: [attrib_value]) }
+
       let(:attrib_value) { build(:attrib_value, value: 'Not allowed value') }
       let(:attrib_allowed_value) { build(:attrib_allowed_value, value: 'Allowed value') }
       let(:attrib_type) { create(:attrib_type, allowed_values: [attrib_allowed_value]) }
 
-      subject { build(:attrib, project: project, attrib_type: attrib_type, values: [attrib_value]) }
-
       it {
-        expect(subject.errors.full_messages).to match_array(["Values Value 'Not allowed value' is not allowed. Please use one of: Allowed value"])
+        expect(subject.errors.full_messages).to contain_exactly("Values Value 'Not allowed value' is not allowed. Please use one of: Allowed value")
       }
     end
 
@@ -151,7 +149,7 @@ RSpec.describe Attrib do
         let(:attrib_value) { build(:attrib_value, value: '2022-01-50') }
 
         it {
-          expect(subject.errors.full_messages).to match_array(["Value '2022-01-50' couldn't be parsed: 'argument out of range'"])
+          expect(subject.errors.full_messages).to contain_exactly("Value '2022-01-50' couldn't be parsed: 'argument out of range'")
         }
       end
 
@@ -159,26 +157,26 @@ RSpec.describe Attrib do
         let(:attrib_value) { build(:attrib_value, value: '2022-01-01 12:10 wrong_timezone') }
 
         it {
-          expect(subject.errors.full_messages).to match_array(["Value '2022-01-01 12:10 wrong_timezone' contains a non-valid timezone"])
+          expect(subject.errors.full_messages).to contain_exactly("Value '2022-01-01 12:10 wrong_timezone' contains a non-valid timezone")
         }
       end
     end
 
     describe '#validate_issues' do
+      subject { build(:attrib, project: project, attrib_type: attrib_type, issues: [issue]) }
+
       let(:issue) { create(:issue_with_tracker) }
       let(:attrib_type) { create(:attrib_type, issue_list: false) }
 
-      subject { build(:attrib, project: project, attrib_type: attrib_type, issues: [issue]) }
-
-      it { expect(subject.errors.full_messages).to match_array(["Issues can't have issues"]) }
+      it { expect(subject.errors.full_messages).to contain_exactly("Issues can't have issues") }
     end
 
     describe '#validate_allowed_values_for_attrib_type' do
-      let(:attrib_type) { create(:attrib_type, value_count: 1) }
-
       subject { build(:attrib, project: project, attrib_type: attrib_type, values: []) }
 
-      it { expect(subject.errors.full_messages).to match_array(['Values has 0 values, but only 1 are allowed']) }
+      let(:attrib_type) { create(:attrib_type, value_count: 1) }
+
+      it { expect(subject.errors.full_messages).to contain_exactly('Values has 0 values, but only 1 are allowed') }
     end
   end
 end

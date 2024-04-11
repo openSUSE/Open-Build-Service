@@ -1,10 +1,8 @@
-require 'rails_helper'
-
 RSpec.describe Relationship::AddRole do
+  subject { Relationship::AddRole.new(package_or_project, role, options).add_role }
+
   let(:user) { create(:confirmed_user) }
   let(:role) { create(:role) }
-
-  subject { Relationship::AddRole.new(package_or_project, role, options).add_role }
 
   shared_examples 'user' do
     context 'add user' do

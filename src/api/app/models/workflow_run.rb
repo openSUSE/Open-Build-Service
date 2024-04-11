@@ -1,16 +1,10 @@
 # rubocop:disable Metrics/ClassLength
-class WorkflowRun < ApplicationRecord
-  SOURCE_NAME_PAYLOAD_MAPPING = {
-    'pull_request' => ['pull_request', 'number'],
-    'Merge Request Hook' => ['object_attributes', 'iid'],
-    'push' => ['head_commit', 'id'],
-    'Push Hook' => ['commits', 0, 'id']
-  }.freeze
 
+class WorkflowRun < ApplicationRecord
   SOURCE_URL_PAYLOAD_MAPPING = {
-    'pull_request' => ['pull_request', 'html_url'],
-    'Merge Request Hook' => ['object_attributes', 'url'],
-    'push' => ['head_commit', 'url'],
+    'pull_request' => %w[pull_request html_url],
+    'Merge Request Hook' => %w[object_attributes url],
+    'push' => %w[head_commit url],
     'Push Hook' => ['commits', 0, 'url']
   }.freeze
 
@@ -23,13 +17,19 @@ class WorkflowRun < ApplicationRecord
     :state, :status_options
   ].freeze
 
-  validates :response_url, length: { maximum: 255 }
+  validates :scm_vendor, :response_url,
+            :workflow_configuration_path, :workflow_configuration_url,
+            :hook_event, :hook_action, :generic_event_type,
+            :repository_name, :repository_owner, :event_source_name, length: { maximum: 255 }
   validates :request_headers, :status, presence: true
+  validates :workflow_configuration, length: { maximum: 65_535 }
 
   belongs_to :token, class_name: 'Token::Workflow', optional: true
   has_many :artifacts, class_name: 'WorkflowArtifactsPerStep', dependent: :destroy
   has_many :scm_status_reports, class_name: 'SCMStatusReport', dependent: :destroy
   has_many :event_subscriptions, dependent: :destroy
+
+  after_save :create_event, if: :status_changed_to_fail?
 
   paginates_per 20
 
@@ -47,7 +47,7 @@ class WorkflowRun < ApplicationRecord
   # Stores debug info to help figure out what went wrong when trying to save a Status in the SCM.
   # Marks the workflow run as failed also.
   def save_scm_report_failure(message, options)
-    update(status: 'fail') # set WorkflowRun status
+    update_as_failed(message)
     scm_status_reports.create(response_body: message,
                               request_parameters: JSON.generate(options.slice(*PERMITTED_OPTIONS)),
                               status: 'fail') # set SCMStatusReport status
@@ -59,24 +59,15 @@ class WorkflowRun < ApplicationRecord
   end
 
   def payload
-    JSON.parse(request_payload)
+    JSON.parse(request_payload.presence || {})
   rescue JSON::ParserError
     { payload: 'unparseable' }
   end
 
-  def hook_event
-    parsed_request_headers['HTTP_X_GITHUB_EVENT'] ||
-      parsed_request_headers['HTTP_X_GITLAB_EVENT']
-  end
+  def repository_full_name
+    return unless repository_owner && repository_name
 
-  def hook_action
-    return payload['action'] if pull_request_with_allowed_action
-    return payload.dig('object_attributes', 'action') if merge_request_with_allowed_action
-  end
-
-  def repository_name
-    payload.dig('repository', 'full_name') || # For GitHub and Gitea on pull_request and push events
-      payload.dig('project', 'path_with_namespace') # For GitLab on merge request and push events
+    "#{repository_owner}/#{repository_name}"
   end
 
   def repository_url
@@ -84,40 +75,19 @@ class WorkflowRun < ApplicationRecord
       payload.dig('project', 'web_url') # For GitLab on merge request and push events
   end
 
-  def event_source_name
-    path = SOURCE_NAME_PAYLOAD_MAPPING[hook_event]
-    payload.dig(*path) if path
-  end
-
   def event_source_url
     mapped_source_url = SOURCE_URL_PAYLOAD_MAPPING[hook_event]
     payload.dig(*mapped_source_url) if mapped_source_url
   end
 
-  def generic_event_type
-    # We only have filters for push, tag_push, and pull_request
-    if hook_event == 'Push Hook' || payload.fetch('ref', '').match('refs/heads')
-      'push'
-    elsif hook_event == 'Tag Push Hook' || payload.fetch('ref', '').match('refs/tag')
-      'tag_push'
-    elsif hook_event.in?(['pull_request', 'Merge Request Hook'])
-      'pull_request'
-    end
-  end
-
-  # FIXME: This `if github do this and if gitlab do that` is scattered around
-  # the code regarding workflow runs. It is asking for a refactor putting
-  # together all the behaviour regarding GitHub and all the behaviour regarding
-  # GitLab.
-  def scm_vendor
-    if parsed_request_headers['HTTP_X_GITEA_EVENT']
-      :gitea
-    elsif parsed_request_headers['HTTP_X_GITHUB_EVENT']
-      :github
-    elsif parsed_request_headers['HTTP_X_GITLAB_EVENT']
-      :gitlab
-    else
-      :unknown
+  def event_source_message
+    case generic_event_type
+    when 'pull_request'
+      pull_request_message
+    when generic_event_type == 'push'
+      push_message
+    when generic_event_type == 'tag_push'
+      tag_push_message
     end
   end
 
@@ -125,42 +95,98 @@ class WorkflowRun < ApplicationRecord
     scm_status_reports.last&.response_body
   end
 
-  private
+  def configuration_source
+    [workflow_configuration_url, workflow_configuration_path].filter_map(&:presence).first
+  end
 
-  def parsed_request_headers
-    request_headers.split("\n").each_with_object({}) do |h, headers|
-      k, v = h.split(':')
-      headers[k] = v.strip
+  def formatted_event_source_name
+    case hook_event
+    when 'pull_request', 'Merge Request Hook'
+      "##{event_source_name}"
+    else
+      event_source_name
     end
   end
 
-  def pull_request_with_allowed_action
-    hook_event == 'pull_request' &&
-      SCMWebhook::ALLOWED_PULL_REQUEST_ACTIONS.include?(payload['action'])
+  # Examples of summary:
+  #   Pull request #234, opened
+  #   Merge request hook #234, open
+  #   Push 0940857924387654354986745938675645365436
+  #   Tag push hook Unknown source
+  def summary
+    str = "#{hook_event&.humanize || 'unknown'} #{formatted_event_source_name}"
+    str += ", #{hook_action.humanize.downcase}" if hook_action.present?
+    str
   end
 
-  def merge_request_with_allowed_action
-    hook_event == 'Merge Request Hook' &&
-      SCMWebhook::ALLOWED_MERGE_REQUEST_ACTIONS.include?(payload.dig('object_attributes', 'action'))
+  private
+
+  def event_parameters
+    { id: id, token_id: token_id, hook_event: hook_event&.humanize || 'unknown', summary: summary, repository_full_name: repository_full_name }
+  end
+
+  def create_event
+    Event::WorkflowRunFail.create(event_parameters)
+  end
+
+  def status_changed_to_fail?
+    saved_change_to_status? && status == 'fail'
+  end
+
+  def pull_request_message
+    case scm_vendor
+    when 'github', 'gitea'
+      title = payload.dig('pull_request', 'title')
+      body = payload.dig('pull_request', 'body')
+      "#{title}\n#{body}"
+    when 'gitlab'
+      title = payload.dig('object_attributes', 'title')
+      body = payload.dig('object_attributes', 'description')
+      "#{title}\n#{body}"
+    end
+  end
+
+  def push_message
+    case scm_vendor
+    when 'github', 'gitea'
+      payload.dig('head_commit', 'message')
+    when 'gitlab'
+      payload.dig('commits', 0, 'message')
+    end
+  end
+
+  # FIXME: How to get the real commit message for tag_push?
+  def tag_push_message
+    "Tag #{payload['ref']} got pushed"
   end
 end
-# rubocop:enable Metrics/ClassLength
 
 # == Schema Information
 #
 # Table name: workflow_runs
 #
-#  id              :integer          not null, primary key
-#  request_headers :text(65535)      not null
-#  request_payload :text(4294967295) not null
-#  response_body   :text(65535)
-#  response_url    :string(255)
-#  status          :integer          default("running"), not null
-#  created_at      :datetime         not null
-#  updated_at      :datetime         not null
-#  token_id        :integer          not null, indexed
+#  id                          :integer          not null, primary key
+#  event_source_name           :string(255)
+#  generic_event_type          :string(255)
+#  hook_action                 :string(255)
+#  hook_event                  :string(255)
+#  repository_name             :string(255)
+#  repository_owner            :string(255)
+#  request_headers             :text(65535)      not null
+#  request_payload             :text(4294967295) not null
+#  response_body               :text(65535)
+#  response_url                :string(255)
+#  scm_vendor                  :string(255)
+#  status                      :integer          default("running"), not null
+#  workflow_configuration      :text(65535)
+#  workflow_configuration_path :string(255)
+#  workflow_configuration_url  :string(255)
+#  created_at                  :datetime         not null
+#  updated_at                  :datetime         not null
+#  token_id                    :integer          not null, indexed
 #
 # Indexes
 #
 #  index_workflow_runs_on_token_id  (token_id)
 #
+# rubocop:enable Metrics/ClassLength

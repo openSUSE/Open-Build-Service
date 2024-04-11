@@ -1,6 +1,5 @@
 class Token::Workflow < Token
-  AUTHENTICATION_DOCUMENTATION_LINK = (::Workflow::SCM_CI_DOCUMENTATION_URL +
-                                       '#sec.obs.obs_scm_ci_workflow_integration.setup.token_authentication.how_to_authenticate_scm_with_obs').freeze
+  AUTHENTICATION_DOCUMENTATION_LINK = "#{::Workflow::SCM_CI_DOCUMENTATION_URL}#sec.obs.obs_scm_ci_workflow_integration.setup.token_authentication.how_to_authenticate_scm_with_obs".freeze
 
   has_many :workflow_runs, dependent: :destroy, foreign_key: 'token_id', inverse_of: false
   has_and_belongs_to_many :users,
@@ -43,9 +42,12 @@ class Token::Workflow < Token
 
     # This is just an initial generic report to give a feedback asap. Initial status pending
     SCMStatusReporter.new(@scm_webhook.payload, @scm_webhook.payload, scm_token, workflow_run, initial_report: true).call
-    @workflows.each(&:call)
-    SCMStatusReporter.new(@scm_webhook.payload, @scm_webhook.payload, scm_token, workflow_run, 'success', initial_report: true).call
+    @workflows.each do |workflow|
+      return workflow.errors.full_messages if workflow.invalid?(:call)
 
+      workflow.call
+    end
+    SCMStatusReporter.new(@scm_webhook.payload, @scm_webhook.payload, scm_token, workflow_run, 'success', initial_report: true).call
     # Always returning validation errors to report them back to the SCM in order to help users debug their workflows
     validation_errors
   rescue Octokit::Unauthorized, Gitlab::Error::Unauthorized

@@ -5,7 +5,7 @@ class RequestController < ApplicationController
   validate_action request_create: { method: :post, response: :request }
 
   # TODO: allow PUT for non-admins
-  before_action :require_admin, only: [:update, :destroy]
+  before_action :require_admin, only: %i[update destroy]
 
   # GET /request
   def index
@@ -27,7 +27,7 @@ class RequestController < ApplicationController
 
   def render_request_collection
     # if all params areblank, something is wrong
-    raise RequireFilter if [:project, :user, :states, :types, :reviewstates, :ids].all? { |f| params[f].blank? }
+    raise RequireFilter if %i[project user states types reviewstates ids].all? { |f| params[f].blank? }
 
     # convert comma seperated values into arrays
     params[:roles] = params[:roles].split(',') if params[:roles]
@@ -54,7 +54,9 @@ class RequestController < ApplicationController
   # GET /request/:id
   def show
     required_parameters :id
-    req = BsRequest.find_by_number!(params[:id])
+    req = BsRequest.find_by(number: params[:id])
+    raise ActiveRecord::RecordNotFound, "Couldn't find Request with number '#{params[:id]}'" if req.nil?
+
     render xml: req.render_xml(params)
   end
 
@@ -167,7 +169,7 @@ class RequestController < ApplicationController
     xml_request = Nokogiri::XML("<request id='#{req.number}'/>", &:strict).root if params[:view] == 'xml'
 
     req.bs_request_actions.each do |action|
-      withissues = params[:withissues].to_s.in?(['1', 'true'])
+      withissues = params[:withissues].to_s.in?(%w[1 true])
       action_diff = action.sourcediff(
         view: params[:view],
         withissues: withissues,
@@ -182,6 +184,20 @@ class RequestController < ApplicationController
         xml_request.at_xpath('//request/action[last()]').add_child(action_diff)
       else
         diff_text += action_diff
+      end
+    end
+
+    if params[:withdescriptionissues].present?
+      begin
+        data = Backend::Api::IssueTrackers.parse(req.description)
+      rescue Backend::Error
+        return
+      end
+
+      if xml_request
+        xml_request.at_xpath('//request').add_child(Nokogiri::XML(data).root)
+      else
+        diff_text += "Request Description issues:#{data}\n"
       end
     end
 

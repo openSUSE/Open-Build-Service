@@ -6,21 +6,30 @@ require 'builder/xchar'
 class SourceController < ApplicationController
   include Source::Errors
 
-  validate_action index: { method: :get, response: :directory }
-  validate_action projectlist: { method: :get, response: :directory }
-  validate_action packagelist: { method: :get, response: :directory }
-  validate_action filelist: { method: :get, response: :directory }
+  SOURCE_UNTOUCHED_COMMANDS = %w[branch diff linkdiff servicediff showlinked rebuild wipe
+                                 waitservice remove_flag set_flag getprojectservices fork].freeze
+  # list of cammands which create the target package
+  PACKAGE_CREATING_COMMANDS = %w[branch release copy undelete instantiate fork].freeze
+  # list of commands which are allowed even when the project has the package only via a project link
+  READ_COMMANDS = %w[branch diff linkdiff servicediff showlinked getprojectservices release fork].freeze
+  # commands which are fine to operate on external scm managed projects
+  SCM_SYNC_PROJECT_COMMANDS = %w[diff linkdiff showlinked copy remove_flag set_flag runservice fork
+                                 waitservice getprojectservices unlock wipe rebuild collectbuildenv].freeze
 
-  skip_before_action :extract_user, only: [:lastevents_public, :global_command_orderkiwirepos, :global_command_triggerscmsync]
-  skip_before_action :require_login, only: [:lastevents_public, :global_command_orderkiwirepos, :global_command_triggerscmsync]
+  validate_action index: { method: :get, response: :directory }
+
+  skip_before_action :extract_user, only: %i[lastevents_public global_command_orderkiwirepos global_command_triggerscmsync]
+  skip_before_action :require_login, only: %i[lastevents_public global_command_orderkiwirepos global_command_triggerscmsync]
   # we use an array for the "file" parameter for: package_command_diff, package_command_linkdiff and package_command_servicediff
   skip_before_action :validate_params, only: [:package_command]
 
-  before_action :require_valid_project_name, except: [:index, :lastevents, :lastevents_public,
-                                                      :global_command_orderkiwirepos, :global_command_branch,
-                                                      :global_command_triggerscmsync, :global_command_createmaintenanceincident]
+  before_action :require_valid_project_name, except: %i[index lastevents lastevents_public
+                                                        global_command_orderkiwirepos global_command_branch
+                                                        global_command_triggerscmsync global_command_createmaintenanceincident]
 
   before_action :require_scmsync_host_check, only: [:global_command_triggerscmsync]
+
+  before_action :require_package, only: %i[show_package delete_package package_command]
 
   # GET /source
   #########
@@ -37,31 +46,10 @@ class SourceController < ApplicationController
 
       pass_to_backend
     else
-      projectlist
+      @project_names = Project.order(:name).pluck(:name)
+      render formats: [:xml]
     end
   end
-
-  def projectlist
-    @project_names = Project.order(:name).pluck(:name)
-    render formats: [:xml]
-  end
-
-  def set_issues_default
-    @filter_changes = @states = nil
-    @filter_changes = params[:changes].split(',') if params[:changes]
-    @states = params[:states].split(',') if params[:states]
-    @login = params[:login]
-  end
-
-  def show_package_issues
-    raise NoLocalPackage, 'Issues can only be shown for local packages' unless @tpkg
-
-    set_issues_default
-    @tpkg.update_if_dirty
-    render partial: 'package_issues'
-  end
-
-  before_action :require_package, only: [:show_package, :delete_package, :package_command]
 
   # GET /source/:project/:package
   def show_package
@@ -70,24 +58,25 @@ class SourceController < ApplicationController
       raise PackageExists, 'the package is not deleted' if tpkg
 
       validate_read_access_of_deleted_package(@target_project_name, @target_package_name)
-    elsif ['_project', '_pattern'].include?(@target_package_name)
+    elsif %w[_project _pattern].include?(@target_package_name)
       Project.get_by_name(@target_project_name)
     else
-      @tpkg = Package.get_by_project_and_name(@target_project_name, @target_package_name, use_source: true, follow_project_links: true)
+      @tpkg = Package.get_by_project_and_name(@target_project_name, @target_package_name)
     end
 
     show_package_issues && return if params[:view] == 'issues'
 
     # exec
     path = request.path_info
-    path += build_query_from_hash(params, [:rev, :linkrev, :emptylink,
-                                           :expand, :view, :extension,
-                                           :lastworking, :withlinked, :meta,
-                                           :deleted, :parse, :arch,
-                                           :repository, :product, :nofilename])
+    path += build_query_from_hash(params, %i[rev linkrev emptylink
+                                             expand view extension
+                                             lastworking withlinked meta
+                                             deleted parse arch
+                                             repository product nofilename])
     pass_to_backend(path)
   end
 
+  # DELETE /source/:project/:package
   def delete_package
     # checks
     raise DeletePackageNoPermission, '_project package can not be deleted.' if @target_package_name == '_project'
@@ -114,34 +103,6 @@ class SourceController < ApplicationController
     render_ok
   end
 
-  # before_action for show_package, delete_package and package_command
-  def require_package
-    # init and validation
-    #--------------------
-    @deleted_package = params.key?(:deleted)
-
-    # FIXME: for OBS 3, api of branch and copy calls have target and source in the opossite place
-    if params[:cmd].in?(['branch', 'release'])
-      @target_package_name = params[:package]
-      @target_project_name = params[:target_project] # might be nil
-      @target_package_name = params[:target_package] if params[:target_package]
-    else
-      @target_project_name = params[:project]
-      @target_package_name = params[:package]
-    end
-  end
-
-  def verify_can_modify_target_package!
-    return if User.session!.can_modify?(@package)
-
-    unless @package.instance_of?(Package)
-      raise CmdExecutionNoPermission, "no permission to execute command '#{params[:cmd]}' " \
-                                      'for unspecified package'
-    end
-    raise CmdExecutionNoPermission, "no permission to execute command '#{params[:cmd]}' " \
-                                    "for package #{@package.name} in project #{@package.project.name}"
-  end
-
   # POST /source/:project/:package
   def package_command
     params[:user] = User.session!.login
@@ -149,12 +110,12 @@ class SourceController < ApplicationController
     raise MissingParameterError, 'POST request without given cmd parameter' unless params[:cmd]
 
     # valid post commands
-    valid_commands = ['diff', 'branch', 'servicediff', 'linkdiff', 'showlinked', 'copy',
-                      'remove_flag', 'set_flag', 'undelete', 'runservice', 'waitservice',
-                      'mergeservice', 'commit', 'commitfilelist', 'createSpecFileTemplate',
-                      'deleteuploadrev', 'linktobranch', 'updatepatchinfo', 'getprojectservices',
-                      'unlock', 'release', 'importchannel', 'wipe', 'rebuild', 'collectbuildenv',
-                      'instantiate', 'addcontainers', 'addchannels', 'enablechannel']
+    valid_commands = %w[diff branch servicediff linkdiff showlinked copy
+                        remove_flag set_flag undelete runservice waitservice
+                        mergeservice commit commitfilelist createSpecFileTemplate
+                        deleteuploadrev linktobranch updatepatchinfo getprojectservices
+                        unlock release importchannel rebuild collectbuildenv
+                        instantiate addcontainers addchannels enablechannel fork]
 
     @command = params[:cmd]
     raise IllegalRequest, 'invalid_command' unless valid_commands.include?(@command)
@@ -176,9 +137,7 @@ class SourceController < ApplicationController
     # Check for existence/access of origin package when specified
     @spkg = nil
     Project.get_by_name(origin_project_name) if origin_project_name
-    if origin_package_name && !origin_package_name.in?(['_project', '_pattern']) && !(params[:missingok] && @command.in?(['branch', 'release']))
-      @spkg = Package.get_by_project_and_name(origin_project_name, origin_package_name)
-    end
+    @spkg = Package.get_by_project_and_name(origin_project_name, origin_package_name) if origin_package_name && !origin_package_name.in?(%w[_project _pattern]) && !(params[:missingok] && @command.in?(%w[branch release]))
     unless PACKAGE_CREATING_COMMANDS.include?(@command) && !Project.exists_by_name(@target_project_name)
       valid_project_name!(params[:project])
       if @command == 'release' # wipe and rebuild should become supported as well
@@ -188,63 +147,14 @@ class SourceController < ApplicationController
       end
       # even when we can create the package, an existing instance must be checked if permissions are right
       @project = Project.get_by_name(@target_project_name)
-      if PACKAGE_CREATING_COMMANDS.exclude?(@command) || Package.exists_by_project_and_name(@target_project_name,
-                                                                                            @target_package_name,
-                                                                                            follow_project_links: SOURCE_UNTOUCHED_COMMANDS.include?(@command))
+      if (PACKAGE_CREATING_COMMANDS.exclude?(@command) || Package.exists_by_project_and_name(@target_project_name, @target_package_name, follow_project_links: SOURCE_UNTOUCHED_COMMANDS.include?(@command))) &&
+         (@project.is_a?(String) || @project.scmsync.blank? || SCM_SYNC_PROJECT_COMMANDS.exclude?(@command))
         # is a local project, which is not scm managed. Or using a command not supported for scm projects.
-        validate_target_for_package_command_exists! if @project.is_a?(String) || @project.scmsync.blank? || SCM_SYNC_PROJECT_COMMANDS.exclude?(@command)
+        validate_target_for_package_command_exists!
       end
     end
 
     dispatch_command(:package_command, @command)
-  end
-
-  SOURCE_UNTOUCHED_COMMANDS = ['branch', 'diff', 'linkdiff', 'servicediff', 'showlinked', 'rebuild', 'wipe',
-                               'waitservice', 'remove_flag', 'set_flag', 'getprojectservices'].freeze
-  # list of cammands which create the target package
-  PACKAGE_CREATING_COMMANDS = ['branch', 'release', 'copy', 'undelete', 'instantiate'].freeze
-  # list of commands which are allowed even when the project has the package only via a project link
-  READ_COMMANDS = ['branch', 'diff', 'linkdiff', 'servicediff', 'showlinked', 'getprojectservices', 'release'].freeze
-  # commands which are fine to operate on external scm managed projects
-  SCM_SYNC_PROJECT_COMMANDS = ['diff', 'linkdiff', 'showlinked', 'copy', 'remove_flag', 'set_flag', 'runservice',
-                               'waitservice', 'getprojectservices', 'unlock', 'wipe', 'rebuild', 'collectbuildenv'].freeze
-
-  def validate_target_for_package_command_exists!
-    @project = nil
-    @package = nil
-
-    follow_project_links = SOURCE_UNTOUCHED_COMMANDS.include?(@command)
-
-    unless @target_package_name.in?(['_project', '_pattern'])
-      use_source = true
-      use_source = false if @command == 'showlinked'
-      @package = Package.get_by_project_and_name(@target_project_name, @target_package_name,
-                                                 use_source: use_source, follow_project_links: follow_project_links)
-      if @package # for remote package case it's nil
-        @project = @package.project
-        ignore_lock = @command == 'unlock'
-        unless READ_COMMANDS.include?(@command) || User.session!.can_modify?(@package, ignore_lock)
-          raise CmdExecutionNoPermission, "no permission to modify package #{@package.name} in project #{@project.name}"
-        end
-      end
-    end
-
-    # check read access rights when the package does not exist anymore
-    validate_read_access_of_deleted_package(@target_project_name, @target_package_name) if @package.nil? && @deleted_package
-  end
-
-  def check_and_remove_repositories!(repositories, opts)
-    result = Project.check_repositories(repositories) unless opts[:force]
-    raise RepoDependency, result[:error] if !opts[:force] && result[:error]
-
-    result = Project.remove_repositories(repositories, opts)
-    raise ChangeProjectNoPermission, result[:error] if !opts[:force] && result[:error]
-  end
-
-  def pubkey_path
-    # check for project
-    @prj = Project.get_by_name(params[:project])
-    request.path_info + build_query_from_hash(params, [:user, :comment, :meta, :rev])
   end
 
   # GET /source/:project/_pubkey and /_sslcert
@@ -303,7 +213,7 @@ class SourceController < ApplicationController
     if package_name == '_project'
       Project.get_by_name(project_name)
     else
-      pack = Package.get_by_project_and_name(project_name, package_name, use_source: true)
+      pack = Package.get_by_project_and_name(project_name, package_name)
       if pack
         # in case of project links, we need to rewrite the target
         project_name = pack.project.name
@@ -312,44 +222,8 @@ class SourceController < ApplicationController
     end
 
     path = Package.source_path(project_name, package_name, file)
-    path += build_query_from_hash(params, [:rev, :meta, :deleted, :limit, :expand, :view])
+    path += build_query_from_hash(params, %i[rev meta deleted limit expand view])
     pass_to_backend(path)
-  end
-
-  def check_permissions_for_file
-    @project_name = params[:project]
-    @package_name = params[:package]
-    @file = params[:filename]
-    @path = Package.source_path(@project_name, @package_name, @file)
-
-    # authenticate
-    params[:user] = User.session!.login
-
-    @prj = Project.get_by_name(@project_name)
-    @pack = nil
-    @allowed = false
-
-    if @package_name == '_project' || @package_name == '_pattern'
-      @allowed = permissions.project_change?(@prj)
-
-      raise WrongRouteForAttribute, "Attributes need to be changed through #{change_attribute_path(project: params[:project])}" if @file == '_attribute' && @package_name == '_project'
-      raise WrongRouteForStagingWorkflow if @file == '_staging_workflow' && @package_name == '_project'
-    else
-      # we need a local package here in any case for modifications
-      @pack = Package.get_by_project_and_name(@project_name, @package_name)
-      # no modification or deletion of scmsynced projects and packages allowed
-      check_for_scmsynced_package_and_project(project: @prj, package: @pack)
-      @allowed = permissions.package_change?(@pack)
-    end
-  end
-
-  def check_for_scmsynced_package_and_project(project:, package:)
-    return unless package.try(:scmsync).present? || project.try(:scmsync).present?
-
-    scmsync_url = project.try(:scmsync)
-    scmsync_url ||= package.try(:scmsync)
-
-    raise ScmsyncReadOnly, "Can not change files in SCM bridged packages and projects: #{scmsync_url}"
   end
 
   # PUT /source/:project/:package/:filename
@@ -378,13 +252,13 @@ class SourceController < ApplicationController
 
     Package.verify_file!(@pack, params[:filename], request.raw_post)
 
-    @path += build_query_from_hash(params, [:user, :comment, :rev, :linkrev, :keeplink, :meta])
+    @path += build_query_from_hash(params, %i[user comment rev linkrev keeplink meta])
     pass_to_backend(@path)
 
     # update package timestamp and reindex sources
-    return if params[:rev] == 'repository' || @package_name.in?(['_project', '_pattern'])
+    return if params[:rev] == 'repository' || @package_name.in?(%w[_project _pattern])
 
-    special_file = params[:filename].in?(['_aggregate', '_constraints', '_link', '_service', '_patchinfo', '_channel'])
+    special_file = params[:filename].in?(%w[_aggregate _constraints _link _service _patchinfo _channel])
     @pack.sources_changed(wait_for_update: special_file) # wait for indexing for special files
   end
 
@@ -394,7 +268,7 @@ class SourceController < ApplicationController
 
     raise DeleteFileNoPermission, 'Insufficient permissions to delete file' unless @allowed
 
-    @path += build_query_from_hash(params, [:user, :comment, :meta, :rev, :linkrev, :keeplink])
+    @path += build_query_from_hash(params, %i[user comment meta rev linkrev keeplink])
     Backend::Connection.delete @path
 
     unless @package_name == '_pattern' || @package_name == '_project'
@@ -444,10 +318,86 @@ class SourceController < ApplicationController
 
   # POST /source?cmd=triggerscmsync
   def global_command_triggerscmsync
-    pass_to_backend('/source' + build_query_from_hash(params, [:cmd, :scmrepository, :scmbranch, :isdefaultbranch]))
+    pass_to_backend("/source#{build_query_from_hash(params, %i[cmd scmrepository scmbranch isdefaultbranch])}")
+  end
+
+  def set_issues_defaults
+    @filter_changes = @states = nil
+    @filter_changes = params[:changes].split(',') if params[:changes]
+    @states = params[:states].split(',') if params[:states]
+    @login = params[:login]
   end
 
   private
+
+  # before_action for show_package, delete_package and package_command
+  def require_package
+    # init and validation
+    #--------------------
+    @deleted_package = params.key?(:deleted)
+
+    # FIXME: for OBS 3, api of branch and copy calls have target and source in the opposite place
+    if params[:cmd].in?(%w[branch release])
+      @target_package_name = params[:package]
+      @target_project_name = params[:target_project] # might be nil
+      @target_package_name = params[:target_package] if params[:target_package]
+    else
+      @target_project_name = params[:project]
+      @target_package_name = params[:package]
+    end
+  end
+
+  # GET /source/:project/:package?view=issues
+  # called from show_package
+  def show_package_issues
+    raise NoLocalPackage, 'Issues can only be shown for local packages' unless @tpkg
+
+    set_issues_defaults
+    @tpkg.update_if_dirty
+    render partial: 'package_issues'
+  end
+
+  def pubkey_path
+    # check for project
+    @prj = Project.get_by_name(params[:project])
+    request.path_info + build_query_from_hash(params, %i[user comment meta rev])
+  end
+
+  def check_permissions_for_file
+    @project_name = params[:project]
+    @package_name = params[:package]
+    @file = params[:filename]
+    @path = Package.source_path(@project_name, @package_name, @file)
+
+    # authenticate
+    params[:user] = User.session!.login
+
+    @prj = Project.get_by_name(@project_name)
+    @pack = nil
+    @allowed = false
+
+    if @package_name == '_project' || @package_name == '_pattern'
+      @allowed = permissions.project_change?(@prj)
+
+      raise WrongRouteForAttribute, "Attributes need to be changed through #{change_attribute_path(project: params[:project])}" if @file == '_attribute' && @package_name == '_project'
+      raise WrongRouteForStagingWorkflow if @file == '_staging_workflow' && @package_name == '_project'
+    else
+      # we need a local package here in any case for modifications
+      @pack = Package.get_by_project_and_name(@project_name, @package_name)
+      # no modification or deletion of scmsynced projects and packages allowed
+      check_for_scmsynced_package_and_project(project: @prj, package: @pack)
+      @allowed = permissions.package_change?(@pack)
+    end
+  end
+
+  def check_for_scmsynced_package_and_project(project:, package:)
+    return unless package.try(:scmsync).present? || project.try(:scmsync).present?
+
+    scmsync_url = project.try(:scmsync)
+    scmsync_url ||= package.try(:scmsync)
+
+    raise ScmsyncReadOnly, "Can not change files in SCM bridged packages and projects: #{scmsync_url}"
+  end
 
   def actually_create_incident(project)
     raise ModifyProjectNoPermission, "no permission to modify project '#{project.name}'" unless User.session!.can_modify?(project)
@@ -491,7 +441,7 @@ class SourceController < ApplicationController
   # freeze project link, either creating the freeze or updating it
   # POST /source/<project>?cmd=freezelink
   def project_command_freezelink
-    pass_to_backend(request.path_info + build_query_from_hash(params, [:cmd, :user, :comment]))
+    pass_to_backend(request.path_info + build_query_from_hash(params, %i[cmd user comment]))
   end
 
   # add channel packages and extend repository list
@@ -533,7 +483,7 @@ class SourceController < ApplicationController
     Project.find_by_name(params[:project])
 
     path = request.path_info
-    path += build_query_from_hash(params, [:cmd, :user, :comment])
+    path += build_query_from_hash(params, %i[cmd user comment])
     pass_to_backend(path)
   end
 
@@ -564,7 +514,7 @@ class SourceController < ApplicationController
   def project_command_release
     params[:user] = User.session!.login
 
-    @project = Project.get_by_name(params[:project], includeallpackages: 1)
+    @project = Project.get_by_name(params[:project], include_all_packages: true)
     verify_release_targets!(@project)
 
     if @project.is_a?(String) # remote project
@@ -580,28 +530,69 @@ class SourceController < ApplicationController
       # inject as job
       ProjectDoProjectReleaseJob.perform_later(
         @project.id,
-        params.slice(:project, :targetproject, :targetreposiory, :repository, :setrelease, :user).permit!.to_h
+        params.slice(:project, :targetproject, :targetreposiory, :repository, :arch, :setrelease, :user).permit!.to_h
       )
       render_invoked
     end
   end
 
+  def validate_target_for_package_command_exists!
+    @project = nil
+    @package = nil
+
+    follow_project_links = SOURCE_UNTOUCHED_COMMANDS.include?(@command)
+
+    unless @target_package_name.in?(%w[_project _pattern])
+      use_source = true
+      use_source = false if @command == 'showlinked'
+      @package = Package.get_by_project_and_name(@target_project_name, @target_package_name,
+                                                 use_source: use_source, follow_project_links: follow_project_links)
+      if @package # for remote package case it's nil
+        @project = @package.project
+        ignore_lock = @command == 'unlock'
+        raise CmdExecutionNoPermission, "no permission to modify package #{@package.name} in project #{@project.name}" unless READ_COMMANDS.include?(@command) || User.session!.can_modify?(@package, ignore_lock)
+      end
+    end
+
+    # check read access rights when the package does not exist anymore
+    validate_read_access_of_deleted_package(@target_project_name, @target_package_name) if @package.nil? && @deleted_package
+  end
+
+  def _check_single_target!(source_repository, target_repository)
+    # checking write access and architectures
+    raise UnknownRepository, 'Invalid source repository' unless source_repository
+    raise UnknownRepository, 'Invalid target repository' unless target_repository
+    raise CmdExecutionNoPermission, "no permission to write in project #{target_repository.project.name}" unless User.session!.can_modify?(target_repository.project)
+
+    source_repository.check_valid_release_target!(target_repository)
+  end
+
   def verify_release_targets!(pro)
     repo_matches = nil
     repo_bad_type = nil
+
     pro.repositories.each do |repo|
       next if params[:repository] && params[:repository] != repo.name
 
-      repo.release_targets.each do |releasetarget|
-        unless releasetarget.trigger.in?(['manual', 'maintenance'])
-          repo_bad_type = true
-          next
-        end
-        unless User.session!.can_modify?(releasetarget.target_repository.project)
-          raise CmdExecutionNoPermission, "no permission to write in project #{releasetarget.target_repository.project.name}"
-        end
+      if params[:targetproject] || params[:targetrepository]
+        target_repository = Repository.find_by_project_and_name(params[:targetproject], params[:targetrepository])
+
+        _check_single_target!(repo, target_repository)
 
         repo_matches = true
+      else
+        repo.release_targets.each do |releasetarget|
+          next unless releasetarget
+
+          unless releasetarget.trigger.in?(%w[manual maintenance])
+            repo_bad_type = true
+            next
+          end
+
+          _check_single_target!(repo, releasetarget.target_repository)
+
+          repo_matches = true
+        end
       end
     end
     raise NoMatchingReleaseTarget, 'Trigger is not set to manual in any repository' if repo_bad_type && !repo_matches
@@ -645,9 +636,10 @@ class SourceController < ApplicationController
     raise CmdExecutionNoPermission, "no permission to execute command 'copy'" unless (@project && User.session!.can_modify?(@project)) ||
                                                                                      (@project.nil? && User.session!.can_create_project?(project_name))
 
-    oprj = Project.get_by_name(params[:oproject], includeallpackages: 1)
-    if params.key?(:makeolder) || params.key?(:makeoriginolder)
-      raise CmdExecutionNoPermission, "no permission to execute command 'copy', requires modification permission in origin project" unless User.session!.can_modify?(oprj)
+    oprj = Project.get_by_name(params[:oproject], include_all_packages: true)
+    if (params.key?(:makeolder) || params.key?(:makeoriginolder)) && !User.session!.can_modify?(oprj)
+      raise CmdExecutionNoPermission,
+            "no permission to execute command 'copy', requires modification permission in origin project"
     end
 
     raise RemoteProjectError, 'The copy from remote projects is currently not supported' if oprj.is_a?(String) # remote project
@@ -678,10 +670,10 @@ class SourceController < ApplicationController
             @project.flags.create(status: f.status, flag: f.flag, architecture: f.architecture, repo: f.repo) unless f.flag == 'lock'
           end
           oprj.linking_to.each do |lp|
-            @project.linking_to.create(linked_db_project_id: lp.linked_db_project_id,
-                                       linked_remote_project_name: lp.linked_remote_project_name,
-                                       vrevmode: lp.vrevmode,
-                                       position: lp.position)
+            @project.linking_to.create!(linked_db_project_id: lp.linked_db_project_id,
+                                        linked_remote_project_name: lp.linked_remote_project_name,
+                                        vrevmode: lp.vrevmode,
+                                        position: lp.position)
           end
           oprj.repositories.each do |repo|
             r = @project.repositories.create(name: repo.name,
@@ -821,7 +813,7 @@ class SourceController < ApplicationController
     Package.get_by_project_and_name(@target_project_name, @target_package_name)
 
     path = request.path_info
-    path << build_query_from_hash(params, [:cmd, :user, :comment, :orev, :oproject, :opackage])
+    path << build_query_from_hash(params, %i[cmd user comment orev oproject opackage])
     pass_to_backend(path)
   end
 
@@ -844,19 +836,15 @@ class SourceController < ApplicationController
 
   # POST /source/<project>/<package>?cmd=undelete
   def package_command_undelete
-    if Package.exists_by_project_and_name(@target_project_name, @target_package_name, follow_project_links: false)
-      raise PackageExists, "the package exists already #{@target_project_name} #{@target_package_name}"
-    end
+    raise PackageExists, "the package exists already #{@target_project_name} #{@target_package_name}" if Package.exists_by_project_and_name(@target_project_name, @target_package_name, follow_project_links: false)
 
     tprj = Project.get_by_name(@target_project_name)
-    unless tprj.is_a?(Project) && Pundit.policy(User.session!, Package.new(project: tprj)).create?
-      raise CmdExecutionNoPermission, "no permission to create package in project #{@target_project_name}"
-    end
+    raise CmdExecutionNoPermission, "no permission to create package in project #{@target_project_name}" unless tprj.is_a?(Project) && Pundit.policy(User.session!, Package.new(project: tprj)).create?
 
     path = request.path_info
     raise CmdExecutionNoPermission, 'Only administrators are allowed to set the time' unless User.admin_session? || params[:time].blank?
 
-    path += build_query_from_hash(params, [:cmd, :user, :comment, :time])
+    path += build_query_from_hash(params, %i[cmd user comment time])
     pass_to_backend(path)
 
     # read meta data from backend to restore database object
@@ -919,7 +907,7 @@ class SourceController < ApplicationController
   # POST /source/<project>/<package>?cmd=commit
   def package_command_commit
     path = request.path_info
-    path += build_query_from_hash(params, [:cmd, :user, :comment, :rev, :linkrev, :keeplink, :repairlink])
+    path += build_query_from_hash(params, %i[cmd user comment rev linkrev keeplink repairlink])
     pass_to_backend(path)
 
     @package.sources_changed if @package # except in case of _project package
@@ -928,7 +916,7 @@ class SourceController < ApplicationController
   # POST /source/<project>/<package>?cmd=commitfilelist
   def package_command_commitfilelist
     path = request.path_info
-    path += build_query_from_hash(params, [:cmd, :user, :comment, :rev, :linkrev, :keeplink, :repairlink, :withvalidate])
+    path += build_query_from_hash(params, %i[cmd user comment rev linkrev keeplink repairlink withvalidate])
     answer = pass_to_backend(path)
 
     @package.sources_changed(dir_xml: answer) if @package # except in case of _project package
@@ -940,24 +928,24 @@ class SourceController < ApplicationController
     # opackage_name = params[:opackage]
 
     path = request.path_info
-    path += build_query_from_hash(params, [:cmd, :rev, :orev, :oproject, :opackage, :expand, :linkrev, :olinkrev,
-                                           :unified, :missingok, :meta, :file, :filelimit, :tarlimit,
-                                           :view, :withissues, :onlyissues, :cacheonly, :nodiff])
+    path += build_query_from_hash(params, %i[cmd rev orev oproject opackage expand linkrev olinkrev
+                                             unified missingok meta file filelimit tarlimit
+                                             view withissues onlyissues cacheonly nodiff])
     pass_to_backend(path)
   end
 
   # POST /source/<project>/<package>?cmd=linkdiff
   def package_command_linkdiff
     path = request.path_info
-    path += build_query_from_hash(params, [:cmd, :rev, :unified, :linkrev, :file, :filelimit, :tarlimit,
-                                           :view, :withissues, :onlyissues])
+    path += build_query_from_hash(params, %i[cmd rev unified linkrev file filelimit tarlimit
+                                             view withissues onlyissues])
     pass_to_backend(path)
   end
 
   # POST /source/<project>/<package>?cmd=servicediff
   def package_command_servicediff
     path = request.path_info
-    path += build_query_from_hash(params, [:cmd, :rev, :unified, :file, :filelimit, :tarlimit, :view, :withissues, :onlyissues])
+    path += build_query_from_hash(params, %i[cmd rev unified file filelimit tarlimit view withissues onlyissues])
     pass_to_backend(path)
   end
 
@@ -979,9 +967,9 @@ class SourceController < ApplicationController
 
     # We need to use the project name of package object, since it might come via a project linked project
     path = @package.source_path
-    path << build_query_from_hash(params, [:cmd, :rev, :user, :comment, :oproject, :opackage, :orev, :expand,
-                                           :keeplink, :repairlink, :linkrev, :olinkrev, :requestid,
-                                           :withvrev, :noservice, :dontupdatesource, :withhistory])
+    path << build_query_from_hash(params, %i[cmd rev user comment oproject opackage orev expand
+                                             keeplink repairlink linkrev olinkrev requestid
+                                             withvrev noservice dontupdatesource withhistory])
     pass_to_backend(path)
 
     @package.sources_changed
@@ -1006,7 +994,7 @@ class SourceController < ApplicationController
 
   # POST /source/<project>/<package>?cmd=release
   def package_command_release
-    pkg = Package.get_by_project_and_name(params[:project], params[:package], use_source: true, follow_project_links: false, follow_multibuild: true)
+    pkg = Package.get_by_project_and_name(params[:project], params[:package], follow_project_links: false, follow_multibuild: true)
     multibuild_container = nil
     multibuild_container = params[:package].gsub(/^.*:/, '') if params[:package].include?(':') && !params[:package].starts_with?('_product:')
 
@@ -1015,9 +1003,15 @@ class SourceController < ApplicationController
 
     # specified target
     if params[:target_project]
+      raise MissingParameterError, 'release action with specified target project needs also "repository" and "target_repository" parameter' if params[:target_repository].blank? || params[:repository].blank?
+
       # we do not create it ourself
       Project.get_by_name(params[:target_project])
-      _package_command_release_manual_target(pkg, multibuild_container)
+      # parameter names are different between project and package release unfortunatly.
+      params[:targetproject] = params[:target_project]
+      params[:targetrepository] = params[:target_repository]
+      verify_release_targets!(pkg.project)
+      _package_command_release_manual_target(pkg, multibuild_container, time_now)
     else
       verify_release_targets!(pkg.project)
 
@@ -1026,13 +1020,14 @@ class SourceController < ApplicationController
         next if params[:repository] && params[:repository] != repo.name
 
         repo.release_targets.each do |releasetarget|
-          next unless releasetarget.trigger.in?(['manual', 'maintenance'])
+          next unless releasetarget.trigger.in?(%w[manual maintenance])
 
           # find md5sum and release source and binaries
           release_package(pkg,
                           releasetarget.target_repository,
                           pkg.release_target_name(releasetarget.target_repository, time_now),
                           { filter_source_repository: repo,
+                            filter_architecture: params[:arch],
                             multibuild_container: multibuild_container,
                             setrelease: params[:setrelease],
                             manual: true,
@@ -1044,32 +1039,6 @@ class SourceController < ApplicationController
     render_ok
   end
 
-  def _package_command_release_manual_target(pkg, multibuild_container)
-    verify_can_modify_target!
-
-    if params[:target_repository].blank? || params[:repository].blank?
-      raise MissingParameterError, 'release action with specified target project needs also "repository" and "target_repository" parameter'
-    end
-
-    targetrepo = Repository.find_by_project_and_name(@target_project_name, params[:target_repository])
-    raise UnknownRepository, "Repository does not exist #{params[:target_repository]}" unless targetrepo
-
-    repo = pkg.project.repositories.where(name: params[:repository])
-    raise UnknownRepository, "Repository does not exist #{params[:repository]}" unless repo.count.positive?
-
-    repo = repo.first
-
-    release_package(pkg,
-                    targetrepo,
-                    pkg.name,
-                    { filter_source_repository: repo,
-                      multibuild_container: multibuild_container,
-                      setrelease: params[:setrelease],
-                      manual: true,
-                      comment: "Releasing package #{pkg.name}" })
-  end
-  private :_package_command_release_manual_target
-
   # POST /source/<project>/<package>?cmd=waitservice
   def package_command_waitservice
     path = request.path_info
@@ -1080,7 +1049,7 @@ class SourceController < ApplicationController
   # POST /source/<project>/<package>?cmd=mergeservice
   def package_command_mergeservice
     path = request.path_info
-    path += build_query_from_hash(params, [:cmd, :comment, :user])
+    path += build_query_from_hash(params, %i[cmd comment user])
     pass_to_backend(path)
 
     @package.sources_changed
@@ -1089,7 +1058,7 @@ class SourceController < ApplicationController
   # POST /source/<project>/<package>?cmd=runservice
   def package_command_runservice
     path = request.path_info
-    path += build_query_from_hash(params, [:cmd, :comment, :user])
+    path += build_query_from_hash(params, %i[cmd comment user])
     pass_to_backend(path)
 
     @package.sources_changed unless @project.scmsync.present? || params[:package] == '_project'
@@ -1135,6 +1104,17 @@ class SourceController < ApplicationController
     end
   end
 
+  def verify_can_modify_target_package!
+    return if User.session!.can_modify?(@package)
+
+    unless @package.instance_of?(Package)
+      raise CmdExecutionNoPermission, "no permission to execute command '#{params[:cmd]}' " \
+                                      'for unspecified package'
+    end
+    raise CmdExecutionNoPermission, "no permission to execute command '#{params[:cmd]}' " \
+                                    "for package #{@package.name} in project #{@package.project.name}"
+  end
+
   def private_branch_command
     ret = BranchPackage.new(params).branch
     if ret[:text]
@@ -1148,14 +1128,27 @@ class SourceController < ApplicationController
   end
 
   # POST /source/<project>/<package>?cmd=branch&target_project="optional_project"&target_package="optional_package"&update_project_attribute="alternative_attribute"&comment="message"
-
   def package_command_branch
     # find out about source and target dependening on command   - FIXME: ugly! sync calls
-
     # The branch command may be used just for simulation
     verify_can_modify_target! if !params[:dryrun] && @target_project_name
 
     private_branch_command
+  end
+
+  # POST /source/<project>/<package>?cmd=fork&scmsync="url"&target_project="optional_project"
+  def package_command_fork
+    # The branch command may be used just for simulation
+    verify_can_modify_target!
+
+    raise MissingParameterError, 'scmsync url is not specified' if params[:scmsync].blank?
+
+    ret = BranchPackage.new(params).branch
+    if ret[:text]
+      render plain: ret[:text]
+    else
+      render_ok ret
+    end
   end
 
   # POST /source/<project>/<package>?cmd=set_flag&repository=:opt&arch=:opt&flag=flag&status=status
@@ -1236,5 +1229,27 @@ class SourceController < ApplicationController
                                         error_message,
                                         rdata_field,
                                         object)
+  end
+
+  def _package_command_release_manual_target(pkg, multibuild_container, time_now)
+    verify_can_modify_target!
+
+    targetrepo = Repository.find_by_project_and_name(@target_project_name, params[:target_repository])
+    raise UnknownRepository, "Repository does not exist #{params[:target_repository]}" unless targetrepo
+
+    repo = pkg.project.repositories.where(name: params[:repository])
+    raise UnknownRepository, "Repository does not exist #{params[:repository]}" unless repo.count.positive?
+
+    repo = repo.first
+
+    release_package(pkg,
+                    targetrepo,
+                    pkg.release_target_name(targetrepo, time_now),
+                    { filter_source_repository: repo,
+                      multibuild_container: multibuild_container,
+                      filter_architecture: params[:arch],
+                      setrelease: params[:setrelease],
+                      manual: true,
+                      comment: "Releasing package #{pkg.name}" })
   end
 end

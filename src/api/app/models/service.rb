@@ -46,13 +46,10 @@ class Service
       { name: 'protocol', value: uri.scheme },
       { name: 'path', value: uri.path }
     ]
-    unless (uri.scheme == 'http' && uri.port == 80) ||
-           (uri.scheme == 'https' && uri.port == 443) ||
-           (uri.scheme == 'ftp' && uri.port == 21)
-      service_content << { name: 'port', value: uri.port } # be nice and skip it for simpler _service file
-    end
+    # be nice and skip it for simpler _service file
+    service_content << { name: 'port', value: uri.port } unless known_combination_of_uri_scheme_and_port?(uri)
 
-    if uri.path =~ /.src.rpm$/ || uri.path =~ /.spm$/ # download and extract source package
+    if uri_is_a_source_package?(uri) # download and extract source package
       add_service('download_src_package', service_content)
     else # just download
       service_content << { name: 'filename', value: filename } if filename.present?
@@ -94,8 +91,7 @@ class Service
     else
       Backend::Api::Sources::Package.write_file(project.name, package.name, '_service', document.root.to_xml,
                                                 comment: 'Modified via webui', user: User.session!.login)
-      service_package = Package.get_by_project_and_name(project.name, package.name,
-                                                        use_source: true, follow_project_links: false)
+      service_package = Package.get_by_project_and_name(project.name, package.name, follow_project_links: false)
       return false unless User.session!.can_modify?(service_package)
 
       Backend::Api::Sources::Package.trigger_services(service_package.project.name, service_package.name, User.session!.login)
@@ -105,6 +101,16 @@ class Service
   end
 
   private
+
+  def known_combination_of_uri_scheme_and_port?(uri)
+    (uri.scheme == 'http' && uri.port == 80) ||
+      (uri.scheme == 'https' && uri.port == 443) ||
+      (uri.scheme == 'ftp' && uri.port == 21)
+  end
+
+  def uri_is_a_source_package?(uri)
+    uri.path =~ /.src.rpm$/ || uri.path =~ /.spm$/
+  end
 
   def fill_params(element, parameters)
     parameters.each do |parameter|

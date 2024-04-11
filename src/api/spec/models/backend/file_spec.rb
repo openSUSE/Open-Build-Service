@@ -1,17 +1,9 @@
-require 'rails_helper'
-# WARNING: If you change #file_exists or #has_file test make sure
-# you uncomment the next line and start a test backend.
-# CONFIG['global_write_through'] = true
+RSpec.describe Backend::File, :vcr do
+  subject { TestBackendFile.new(name: 'fake_filename', somefile: somefile_txt_url) }
 
-RSpec.describe Backend::File, vcr: true do
   let(:user) { create(:user, :with_home, login: 'user') }
   let(:package_with_file) { create(:package_with_file, name: 'package_with_files', project: user.home_project) }
-  let(:fake_file) do
-    File.open(Rails.root.join('spec/support/files/hello.txt').expand_path) { |file| file }
-  end
-  let(:fake_file_without_extension) do
-    File.open(Rails.root.join('spec/support/files/hello_world').expand_path) { |file| file }
-  end
+  let(:fake_file) { file_fixture('hello.txt') }
   let(:somefile_txt_url) { "/source/#{user.home_project_name}/#{package_with_file.name}/somefile.txt" }
 
   # Needed because full_path is only defined in subclasses of Backend::File
@@ -29,8 +21,6 @@ RSpec.describe Backend::File, vcr: true do
     stub_const('TestBackendFile', backend_file_class)
   end
 
-  subject { TestBackendFile.new(name: 'fake_filename', somefile: somefile_txt_url) }
-
   describe '#initialize' do
     context 'without any param' do
       subject { Backend::File.new }
@@ -46,13 +36,14 @@ RSpec.describe Backend::File, vcr: true do
   end
 
   describe '#file=' do
+    let(:input_stream) { fake_file.open }
+
     before do
-      @input_stream = File.open(fake_file.path)
-      subject.file = @input_stream
+      subject.file = input_stream
     end
 
     after do
-      @input_stream.close
+      input_stream.close
     end
 
     it { expect(subject.file.class).to eq(Tempfile) }
@@ -62,7 +53,7 @@ RSpec.describe Backend::File, vcr: true do
   describe '#file_from_path' do
     context 'with a well formed filename' do
       before do
-        subject.file_from_path(fake_file.path)
+        subject.file_from_path(fake_file.to_s)
       end
 
       it { expect(subject.file.class).to eq(File) }
@@ -74,7 +65,7 @@ RSpec.describe Backend::File, vcr: true do
 
     context 'with a file without extension' do
       before do
-        subject.file_from_path(fake_file_without_extension.path)
+        subject.file_from_path(file_fixture('hello_world').to_s)
       end
 
       it { expect(subject.file.class).to eq(File) }
@@ -88,7 +79,7 @@ RSpec.describe Backend::File, vcr: true do
   describe '#file' do
     context 'with a file already loaded' do
       before do
-        subject.file_from_path(fake_file.path)
+        subject.file_from_path(fake_file.to_s)
       end
 
       it { expect(subject.file.class).to eq(File) }
@@ -135,7 +126,7 @@ RSpec.describe Backend::File, vcr: true do
 
       it 'displays error messages' do
         subject.file
-        expect(subject.errors.full_messages).to match_array(['Content message'])
+        expect(subject.errors.full_messages).to contain_exactly('Content message')
       end
     end
   end
@@ -169,37 +160,39 @@ RSpec.describe Backend::File, vcr: true do
 
   describe '#reload' do
     context 'with an existing file in the backend' do
+      let!(:previous_content) { subject.content }
+
       before do
         login user
 
-        @previous_content = subject.content
         subject.save({}, 'hello') # Change the content of the file
       end
 
-      it { expect(File.read(subject.reload.path)).not_to eq(@previous_content) }
+      it { expect(File.read(subject.reload.path)).not_to eq(previous_content) }
     end
   end
 
   describe '#save!' do
     context 'with a string as content' do
+      let!(:previous_content) { subject.content }
+
       before do
-        @previous_content = subject.content
         subject.save!({}, 'hello') # Change the content of the file with a string
       end
 
-      it { expect(File.read(subject.file.path)).not_to eq(@previous_content) }
+      it { expect(File.read(subject.file.path)).not_to eq(previous_content) }
       it { expect(File.read(subject.file.path)).to eq('hello') }
     end
 
     context 'with a file as content' do
-      before do
-        @previous_content = subject.content
+      let!(:previous_content) { subject.content }
 
-        subject.file = File.open(fake_file.path)
+      before do
+        subject.file = fake_file.open
         subject.save!
       end
 
-      it { expect(File.read(subject.file.path)).not_to eq(@previous_content) }
+      it { expect(File.read(subject.file.path)).not_to eq(previous_content) }
       it { expect(File.read(subject.file.path)).to eq("hello\n") }
     end
   end
@@ -218,7 +211,7 @@ RSpec.describe Backend::File, vcr: true do
 
       it 'displays error messages' do
         subject.save({}, 'hello')
-        expect(subject.errors.full_messages).to match_array(['Content message'])
+        expect(subject.errors.full_messages).to contain_exactly('Content message')
       end
     end
   end
@@ -247,7 +240,7 @@ RSpec.describe Backend::File, vcr: true do
 
       it { is_expected.not_to be_frozen }
       it { is_expected.not_to be_valid }
-      it { expect(subject.errors.full_messages).to match_array(['Content message']) }
+      it { expect(subject.errors.full_messages).to contain_exactly('Content message') }
       it { expect(subject.response[:type]).to eq('application/octet-stream') }
       it { expect(subject.response[:status]).to eq('200') }
       it { expect(subject.response[:size]).to be > 0 }

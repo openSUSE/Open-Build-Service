@@ -37,12 +37,12 @@ class BsRequestActionMaintenanceIncident < BsRequestAction
 
     releaseproject = target_releaseproject ? Project.get_by_name(target_releaseproject) : tprj
     if releaseproject.try(:name).blank?
-      raise NoMaintenanceReleaseTarget, 'Maintenance incident request contains no defined release' \
-                                        " target project for package #{pkg.name}"
+      raise NoMaintenanceReleaseTarget, 'Maintenance incident request contains no defined release ' \
+                                        "target project for package #{pkg.name}"
     end
 
     # Automatically switch to update project
-    releaseproject = releaseproject.update_instance
+    releaseproject = releaseproject.update_instance_or_self
     unless releaseproject.is_maintenance_release?
       raise NoMaintenanceReleaseTarget, 'Maintenance incident request contains release target ' \
                                         "project #{releaseproject.name} with invalid project " \
@@ -84,9 +84,7 @@ class BsRequestActionMaintenanceIncident < BsRequestAction
     source_cleanup if sourceupdate == 'cleanup'
 
     # create a patchinfo if missing and incident has just been created
-    if opts[:check_for_patchinfo] && !incident_project.packages.joins(:package_kinds).where("kind = 'patchinfo'").exists?
-      Patchinfo.new.create_patchinfo_from_request(incident_project, bs_request)
-    end
+    Patchinfo.new.create_patchinfo_from_request(incident_project, bs_request) if opts[:check_for_patchinfo] && !incident_project.packages.joins(:package_kinds).where("kind = 'patchinfo'").exists?
 
     save
   end
@@ -101,7 +99,8 @@ class BsRequestActionMaintenanceIncident < BsRequestAction
       self.target_project = maintenance_project.name
     end
     unless maintenance_project.is_maintenance_incident? || maintenance_project.is_maintenance?
-      raise NoMaintenanceProject, 'Maintenance incident requests have to go to projects of type maintenance or maintenance_incident'
+      raise NoMaintenanceProject,
+            'Maintenance incident requests have to go to projects of type maintenance or maintenance_incident'
     end
     raise IllegalRequest, 'Target package must not be specified in maintenance_incident actions' if target_package
 
@@ -110,6 +109,10 @@ class BsRequestActionMaintenanceIncident < BsRequestAction
 
   def name
     "Incident #{uniq_key}"
+  end
+
+  def short_name
+    "Incident #{source_package}"
   end
 
   private
@@ -157,14 +160,12 @@ class BsRequestActionMaintenanceIncident < BsRequestAction
                         project: target_releaseproject, package: package_name }
       # accept branching from former update incidents or GM (for kgraft case)
       linkprj = Project.find_by_name(linkinfo['project']) if linkinfo
-      if defined?(linkprj) && linkprj
-        if linkprj.is_maintenance_incident? || linkprj != linkprj.update_instance || kinds.include?('channel')
-          branch_params[:project] = linkinfo['project']
-          branch_params[:ignoredevel] = '1'
-        end
+      if defined?(linkprj) && linkprj && (linkprj.is_maintenance_incident? || linkprj != linkprj.update_instance_or_self || kinds.include?('channel'))
+        branch_params[:project] = linkinfo['project']
+        branch_params[:ignoredevel] = '1'
       end
       # it is fine to have new packages
-      branch_params[:missingok] = 1 unless Package.exists_by_project_and_name(branch_params[:project], package_name, follow_project_links: true)
+      branch_params[:missingok] = 1 unless Package.exists_by_project_and_name(branch_params[:project], package_name)
       ret = BranchPackage.new(branch_params).branch
       new_pkg = Package.get_by_project_and_name(ret[:data][:targetproject], ret[:data][:targetpackage])
 

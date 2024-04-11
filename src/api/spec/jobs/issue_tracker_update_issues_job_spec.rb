@@ -1,6 +1,4 @@
-require 'rails_helper'
-
-RSpec.describe IssueTrackerUpdateIssuesJob, vcr: true do
+RSpec.describe IssueTrackerUpdateIssuesJob, :vcr do
   include ActiveJob::TestHelper
 
   describe '#perform' do
@@ -9,9 +7,9 @@ RSpec.describe IssueTrackerUpdateIssuesJob, vcr: true do
     before do
       allow(IssueTracker).to receive(:find_by).and_return(issue_tracker)
       allow(issue_tracker).to receive(:update_issues)
-    end
 
-    subject! { IssueTrackerUpdateIssuesJob.new.perform(issue_tracker.id) }
+      IssueTrackerUpdateIssuesJob.new.perform(issue_tracker.id)
+    end
 
     it 'updates the issues' do
       expect(issue_tracker).to have_received(:update_issues)

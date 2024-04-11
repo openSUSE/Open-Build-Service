@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe BuildresultStatusLinkComponent, type: :component do
   let(:project_name) { 'home:foo' }
   let(:package_name) { 'hello_world' }
@@ -18,9 +16,9 @@ RSpec.describe BuildresultStatusLinkComponent, type: :component do
     let(:build_details) { 'Some details about the build' }
 
     it 'renders a span tag with text-warning style and build status scheduled' do
-      expect(rendered_content).to have_selector('span.text-warning.toggle-build-info',
-                                                id: "id-#{package_name}_#{repository_name}_#{architecture_name}",
-                                                text: 'scheduled')
+      expect(rendered_content).to have_css('span.text-warning.toggle-build-info',
+                                           id: "id-#{package_name}_#{repository_name}_#{architecture_name}",
+                                           text: 'scheduled')
     end
   end
 
@@ -28,9 +26,9 @@ RSpec.describe BuildresultStatusLinkComponent, type: :component do
     let(:build_status) { 'blocked' }
 
     it 'renders a span tag with the correct id and class' do
-      expect(rendered_content).to have_selector("span.build-state-#{build_status}.toggle-build-info",
-                                                id: "id-#{package_name}_#{repository_name}_#{architecture_name}",
-                                                text: "#{build_status}")
+      expect(rendered_content).to have_css("span.build-state-#{build_status}.toggle-build-info",
+                                           id: "id-#{package_name}_#{repository_name}_#{architecture_name}",
+                                           text: "#{build_status}")
     end
   end
 

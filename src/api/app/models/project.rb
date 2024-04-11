@@ -1,7 +1,7 @@
 # rubocop:disable Metrics/ClassLength
 class Project < ApplicationRecord
   include FlagHelper
-  include Flag::Validations
+  include FlagValidations
   include CanRenderModel
   include HasRelationships
   include HasAttributes
@@ -13,8 +13,8 @@ class Project < ApplicationRecord
   include ProjectDistribution
   include ProjectMaintenance
 
-  TYPES = ['standard', 'maintenance', 'maintenance_incident',
-           'maintenance_release'].freeze
+  TYPES = %w[standard maintenance maintenance_incident
+             maintenance_release].freeze
 
   after_initialize :init
   before_destroy :cleanup_before_destroy, prepend: true
@@ -64,6 +64,7 @@ class Project < ApplicationRecord
   belongs_to :develproject, class_name: 'Project', optional: true
 
   has_many :comments, as: :commentable, dependent: :destroy
+  has_one :comment_lock, as: :commentable, dependent: :destroy
 
   has_many :project_log_entries, dependent: :delete_all do
     def staging_history
@@ -80,6 +81,7 @@ class Project < ApplicationRecord
 
   has_many :notified_projects, dependent: :destroy
   has_many :notifications, through: :notified_projects
+  has_many :reports, as: :reportable, dependent: :nullify
 
   default_scope { where.not('projects.id' => Relationship.forbidden_project_ids) }
 
@@ -111,10 +113,10 @@ class Project < ApplicationRecord
     def valid_name?(name)
       return false unless name.is_a?(String)
       return false if name == '0'
-      return false if name =~ /:[:._]/
-      return false if name =~ /\A[:._]/
+      return false if /:[:._]/.match?(name)
+      return false if /\A[:._]/.match?(name)
       return false if name.end_with?(':')
-      return true  if name =~ /\A[-+\w.:]{1,200}\z/
+      return true  if /\A[-+\w.:]{1,200}\z/.match?(name)
 
       false
     end
@@ -224,19 +226,24 @@ class Project < ApplicationRecord
       end
     end
 
-    # returns an object of project(local or remote) or raises an exception
-    # should be always used when a project is required
-    # The return value is either a Project for local project or an xml
-    # array for a remote project
-    def get_by_name(name, opts = {})
+    # This finder is checking for
+    #   - a Project in the database
+    #   - read authorization of the Project in the database
+    #   - a Project from an interconnect
+    #
+    # The return value is either
+    #   - an instance of Project
+    #   - a string for a Project from an interconnect
+    #   - UnknownObjectError or ReadAccessError exceptions
+    def get_by_name(name, include_all_packages: false)
       dbp = find_by_name(name, skip_check_access: true)
       if dbp.nil?
         dbp, remote_name = find_remote_project(name)
-        return dbp.name + ':' + remote_name if dbp
+        return "#{dbp.name}:#{remote_name}" if dbp
 
         raise Project::Errors::UnknownObjectError, "Project not found: #{name}"
       end
-      if opts[:includeallpackages]
+      if include_all_packages
         Package.joins(:flags).where(project_id: dbp.id).where("flags.flag='sourceaccess'").find_each do |pkg|
           raise ReadAccessError, name unless Package.check_access?(pkg)
         end
@@ -313,7 +320,7 @@ class Project < ApplicationRecord
       path = "/source/#{project}"
       path = Addressable::URI.escape(path)
       path += "/#{ERB::Util.url_encode(file)}" if file.present?
-      path += '?' + opts.to_query if opts.present?
+      path += "?#{opts.to_query}" if opts.present?
       path
     end
 
@@ -340,7 +347,7 @@ class Project < ApplicationRecord
     end
 
     def validate_repository_xml_attribute(request_data, project_name)
-      # Check used repo pathes for existens and read access permissions
+      # Check used repo pathes for existence and read access permissions
       request_data.elements('repository') do |repository|
         repository.elements('path') do |element|
           # permissions check
@@ -349,9 +356,8 @@ class Project < ApplicationRecord
             begin
               target_project = Project.get_by_name(target_project_name)
               # user can access tprj, but backend would refuse to take binaries from there
-              if target_project.instance_of?(Project) && target_project.disabled_for?('access', nil, nil)
-                return { error: "The current backend implementation is not using binaries from read access protected projects #{target_project_name}" }
-              end
+              return { error: "The current backend implementation is not using binaries from read access protected projects #{target_project_name}" } if target_project.instance_of?(Project) &&
+                                                                                                                                                         target_project.disabled_for?('access', nil, nil)
             rescue Project::Errors::UnknownObjectError
               return { error: "A project with the name #{target_project_name} does not exist. Please update the repository path elements." }
             end
@@ -372,12 +378,12 @@ class Project < ApplicationRecord
       end
 
       unless linking_repositories.empty?
-        str = linking_repositories.map! { |l| l.project.name + '/' + l.name }.join("\n")
+        str = linking_repositories.map! { |l| "#{l.project.name}/#{l.name}" }.join("\n")
         return { error: "Unable to delete repository; following repositories depend on this project:\n#{str}" }
       end
 
       unless linking_target_repositories.empty?
-        str = linking_target_repositories.map { |l| l.project.name + '/' + l.name }.join("\n")
+        str = linking_target_repositories.map { |l| "#{l.project.name}/#{l.name}" }.join("\n")
         return { error: "Unable to delete repository; following target repositories depend on this project:\n#{str}" }
       end
       {}
@@ -403,9 +409,9 @@ class Project < ApplicationRecord
 
           # try to remove the repository
           # but never remove the special repository named "deleted"
-          unless repo == deleted_repository
+          if !(repo == deleted_repository) && !User.possibly_nobody.can_modify?(project)
             # permission check
-            return { error: "No permission to remove a repository in project '#{project.name}'" } unless User.possibly_nobody.can_modify?(project)
+            return { error: "No permission to remove a repository in project '#{project.name}'" }
           end
         end
 
@@ -528,12 +534,30 @@ class Project < ApplicationRecord
     end
   end
 
-  def update_instance(namespace = 'OBS', name = 'UpdateProject')
+  def update_instance_or_self(namespace = 'OBS', name = 'UpdateProject')
     # check if a newer instance exists in a defined update project
     a = find_attribute(namespace, name)
-    return Project.find_by_name(a.values[0].value) if a && a.values[0]
+    if a && a.values[0]
+      update_instance = Project.find_by_name(a.values[0].value)
+      return update_instance if update_instance
+
+      raise Project::Errors::UnknownObjectError, "Update project configured in #{name} but not found: #{a.values[0].value}"
+    end
 
     self
+  end
+
+  # Find the project defined in the OBS:UpdateProject attribute
+  def update_project
+    attribute = find_attribute('OBS', 'UpdateProject')
+    return unless attribute
+    return if attribute.values.first.value.empty?
+
+    update_project_name = attribute.values.first.value
+    project = Project.find_by(name: update_project_name)
+    return project if project
+
+    raise Project::Errors::UnknownObjectError, "Update project configured in #{name} but not found: #{update_project_name}"
   end
 
   def cleanup_linking_repos
@@ -647,15 +671,15 @@ class Project < ApplicationRecord
 
   def can_be_unlocked?(with_exception = true)
     if is_maintenance_incident?
-      requests = BsRequest.where(state: [:new, :review, :declined]).joins(:bs_request_actions)
+      requests = BsRequest.where(state: %i[new review declined]).joins(:bs_request_actions)
       maintenance_release_requests = requests.where(bs_request_actions: { type: 'maintenance_release', source_project: name })
       if maintenance_release_requests.exists?
         if with_exception
-          raise OpenReleaseRequest, "Unlock of maintenance incident #{name} is not possible," \
-                                    " because there is a running release request: #{maintenance_release_requests.first.id}"
+          raise OpenReleaseRequest, "Unlock of maintenance incident #{name} is not possible, " \
+                                    "because there is a running release request: #{maintenance_release_requests.first.id}"
         else
-          errors.add(:base, "Unlock of maintenance incident #{name} is not possible," \
-                            " because there is a running release request: #{maintenance_release_requests.first.id}")
+          errors.add(:base, "Unlock of maintenance incident #{name} is not possible, " \
+                            "because there is a running release request: #{maintenance_release_requests.first.id}")
         end
       end
     end
@@ -796,31 +820,22 @@ class Project < ApplicationRecord
     if processed[self]
       str = name
       processed.keys.each do |key|
-        str = str + ' -- ' + key.name
+        str = "#{str} -- #{key.name}"
       end
       raise CycleError, "There is a cycle in project link defintion at #{str}"
     end
     processed[self] = 1
 
-    # package exists in this project
-    pkg = nil
-    pkg = update_instance.packages.find_by_name(package_name) if check_update_project
-    pkg = packages.find_by_name(package_name) if pkg.nil?
-    return pkg if pkg && Package.check_access?(pkg)
+    pkg = find_package_on_update_project(package_name) if check_update_project
+    pkg ||= packages.find_by(name: package_name)
+    return pkg if pkg&.check_access?
 
     # search via all linked projects
-    linking_to.each do |lp|
+    linking_to.local.each do |lp|
       raise CycleError, 'project links against itself, this is not allowed' if self == lp.linked_db_project
 
-      pkg = if lp.linked_db_project.nil?
-              # We can't get a package object from a remote instance ... how shall we handle this ?
-              nil
-            else
-              lp.linked_db_project.find_package(package_name, check_update_project, processed)
-            end
-      unless pkg.nil?
-        return pkg if Package.check_access?(pkg)
-      end
+      pkg = lp.linked_db_project.find_package(package_name, check_update_project, processed)
+      return pkg if pkg&.check_access?
     end
 
     # no package found
@@ -828,79 +843,14 @@ class Project < ApplicationRecord
     nil
   end
 
+  def find_package_on_update_project(package_name)
+    return unless update_project
+
+    update_project.packages.find_by(name: package_name)
+  end
+
   def expand_all_repositories
     repositories.collect(&:expand_all_repositories).flatten.uniq
-  end
-
-  def expand_all_projects(project_map: {}, allow_remote_projects: true)
-    # cycle check
-    return [] if project_map[self]
-
-    project_map[self] = 1
-
-    projects = [self]
-
-    # add all linked and indirect linked projects
-    linking_to.each do |lp|
-      if lp.linked_db_project.nil?
-        projects << lp.linked_remote_project_name if allow_remote_projects
-      else
-        lp.linked_db_project.expand_all_projects(project_map: project_map, allow_remote_projects: allow_remote_projects).each do |p|
-          projects << p
-        end
-      end
-    end
-
-    projects
-  end
-
-  # return array of [:name, :project_id] tuples
-  def expand_all_packages(packages = [], project_map = {}, package_map = {})
-    # check for project link cycle
-    return [] if project_map[self]
-
-    project_map[self] = 1
-
-    self.packages.joins(:project).pluck(:name, 'projects.name').each do |name, prj_name|
-      next if package_map[name]
-
-      packages << [name, prj_name]
-      package_map[name] = 1
-    end
-
-    # second path, all packages from indirect linked projects
-    linking_to.each do |lp|
-      if lp.linked_db_project.nil?
-        # FIXME: this is a remote project
-      else
-        lp.linked_db_project.expand_all_packages(packages, project_map, package_map)
-      end
-    end
-
-    packages.sort_by { |package| package.first.downcase }
-  end
-
-  # return array of [:name, :package_id] tuples for all products
-  # this function is making the products uniq
-  def expand_all_products
-    p_map = {}
-    products = Product.all_products(self).to_a
-    products.each { |p| p_map[p.cpe] = 1 } # existing packages map
-    # second path, all packages from indirect linked projects
-    linking_to.each do |lp|
-      if lp.linked_db_project.nil?
-        # FIXME: this is a remote project
-      else
-        lp.linked_db_project.expand_all_products.each do |p|
-          unless p_map[p.cpe]
-            products << p
-            p_map[p.cpe] = 1
-          end
-        end
-      end
-    end
-
-    products
   end
 
   def add_repository_targets(trepo, source_repo, add_target_repos = [], opts = {})
@@ -931,7 +881,7 @@ class Project < ApplicationRecord
 
   def branch_local_repositories(project, pkg_to_enable, opts = {})
     # shall we use the repositories from a different project?
-    project = project.update_instance('OBS', 'BranchRepositoriesFromProject')
+    project = project.update_instance_or_self('OBS', 'BranchRepositoriesFromProject')
     skip_repos = []
     a = project.find_attribute('OBS', 'BranchSkipRepositories')
     skip_repos = a.values.map(&:value) if a
@@ -969,7 +919,7 @@ class Project < ApplicationRecord
       # or branch from official release project? release to it ...
       target_repos = [repo] if repo.project.is_maintenance_release?
 
-      update_project = repo.project.update_instance
+      update_project = repo.project.update_instance_or_self
       if update_project != repo.project
         # building against gold master projects might happen (kgraft), but release
         # must happen to the right repos in the update project
@@ -1053,7 +1003,7 @@ class Project < ApplicationRecord
         next if cycle_detection[path.id]
 
         # go to all my path elements
-        path_kinds = ['standard', 'hostsystem'] # for rubocop
+        path_kinds = %w[standard hostsystem] # for rubocop
         path_kinds.each do |path_kind|
           path.link.path_elements.where(kind: path_kind).find_each do |ipe|
             # avoid mixing update code streams with channels
@@ -1097,7 +1047,7 @@ class Project < ApplicationRecord
     # - omit 'lock' or we cannot create packages
     disable_publish_for_branches = ::Configuration.disable_publish_for_branches || project.image_template?
     project.flags.each do |f|
-      next if f.flag.in?(['build', 'lock'])
+      next if f.flag.in?(%w[build lock])
       next if f.flag == 'publish' && disable_publish_for_branches
       # NOTE: it does not matter if that flag is set to enable or disable, so we do not check fro
       #       for same flag status here explizit
@@ -1113,13 +1063,13 @@ class Project < ApplicationRecord
 
   def open_requests_with_project_as_source_or_target
     # Includes also requests for packages contained in this project
-    OpenRequestsWithProjectAsSourceOrTargetFinder.new(BsRequest.where(state: [:new, :review, :declined])
+    OpenRequestsWithProjectAsSourceOrTargetFinder.new(BsRequest.where(state: %i[new review declined])
                                                                .joins(:bs_request_actions), name).call
   end
 
   def open_requests_with_by_project_review
     # Includes also by_package reviews for packages contained in this project
-    OpenRequestsWithByProjectReviewFinder.new(BsRequest.where(state: [:new, :review])
+    OpenRequestsWithByProjectReviewFinder.new(BsRequest.where(state: %i[new review])
                                                        .joins(:reviews), name).call
   end
 
@@ -1229,8 +1179,8 @@ class Project < ApplicationRecord
                          .pluck(:number)
 
     maintenance_release = if is_maintenance?
-                            BsRequest.with_target_subprojects(name + ':%')
-                                     .or(BsRequest.with_source_subprojects(name + ':%'))
+                            BsRequest.with_target_subprojects("#{name}:%")
+                                     .or(BsRequest.with_source_subprojects("#{name}:%"))
                                      .in_states(:new)
                                      .with_types(:maintenance_release)
                                      .pluck(:number)
@@ -1347,7 +1297,7 @@ class Project < ApplicationRecord
   # FIXME: will be cleaned up after implementing FATE #308899
   def prepend_kiwi_config
     new_configuration = source_file('_config')
-    return if new_configuration =~ /^Type:/
+    return if /^Type:/.match?(new_configuration)
 
     new_configuration = "%if \"%_repository\" == \"images\"\nType: kiwi\nRepotype: none\nPatterntype: none\n%endif\n" << new_configuration
     Backend::Api::Sources::Project.write_configuration(name, new_configuration)
@@ -1384,8 +1334,21 @@ class Project < ApplicationRecord
            .exists?(attrib_types: { name: 'ImageTemplates' }, attrib_namespaces: { name: 'OBS' })
   end
 
-  def key_info
-    @key_info ||= KeyInfo.find_by_project(self)
+  def signing_key(type:)
+    return nil if type.nil?
+
+    case type.to_sym
+    when :ssl
+      key = SigningKeySSL.new(name)
+    when :gpg
+      key = SigningKeyGPG.new(name)
+    else
+      return nil
+    end
+
+    return nil if key.id.blank?
+
+    key
   end
 
   def dashboard
