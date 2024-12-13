@@ -5,13 +5,10 @@
                                              aria: { expanded: 'true', controls: 'request-filter-direction' } }
       %b Direction
     .px-4.pb-2.accordion-collapse.collapse.show#request-filter-direction
-      = render partial: 'webui/shared/radio_button', locals: { label: 'All',
-                                                              key: 'direction[all]', name: 'direction', value: 'all',
-                                                              checked: selected_filter[:direction] == 'all' }
-      = render partial: 'webui/shared/radio_button', locals: { label: 'Incoming',
+      = render partial: 'webui/shared/check_box', locals: { label: 'Incoming',
                                                               key: 'direction[incoming]', name: 'direction', value: 'incoming',
                                                               checked: selected_filter[:direction] == 'incoming' }
-      = render partial: 'webui/shared/radio_button', locals: { label: 'Outgoing',
+      = render partial: 'webui/shared/check_box', locals: { label: 'Outgoing',
                                                               key: 'direction[outgoing]', name: 'direction', value: 'outgoing',
                                                               checked: selected_filter[:direction] == 'outgoing' }
 
