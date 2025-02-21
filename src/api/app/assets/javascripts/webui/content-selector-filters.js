@@ -27,7 +27,8 @@ function submitFilters() {
 }
 
 let submitFiltersTimeout;
-$(document).on('change keyup', '#content-selector-filters-form input, #content-selector-filters-form select', function() {
+const autoSubmitOnChangeSelector = '#content-selector-filters-form .auto-submit-on-change';
+$(document).on('change keyup', `${autoSubmitOnChangeSelector} input, ${autoSubmitOnChangeSelector} select`, function() {
   // Clear the timeout to prevent the pending submission, if any
   window.clearTimeout(submitFiltersTimeout);
 
@@ -41,6 +42,16 @@ $(document).on('change keyup', '#content-selector-filters-form input, #content-s
     }
   }
   highlightSelectedFilters();
+
+  // Set a timeout to submit the filters
+  submitFiltersTimeout = window.setTimeout(submitFilters, 2000);
+});
+
+const autoSubmitOnFocusOutSelector = '#content-selector-filters-form input.obs-autocomplete';
+$(document).on('focusout blur', autoSubmitOnFocusOutSelector, function() {
+  // TODO: Validate the input value and let the submit happens only if the value is valid and changed
+  // Clear the timeout to prevent the pending submission, if any
+  window.clearTimeout(submitFiltersTimeout);
 
   // Set a timeout to submit the filters
   submitFiltersTimeout = window.setTimeout(submitFilters, 2000);
