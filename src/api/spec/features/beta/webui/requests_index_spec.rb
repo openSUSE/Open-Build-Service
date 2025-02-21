@@ -59,7 +59,7 @@ RSpec.describe 'Requests Index' do
 
   it 'filters incoming requests' do
     find_by_id('requests-dropdown-trigger').click if mobile? # open the filter dropdown
-    choose('Incoming')
+    check('Incoming')
 
     expect(page).to have_link(href: "/request/show/#{incoming_request.number}")
     expect(page).to have_link(href: "/request/show/#{other_incoming_request.number}")
@@ -68,7 +68,7 @@ RSpec.describe 'Requests Index' do
 
   it 'filters outgoing requests' do
     find_by_id('requests-dropdown-trigger').click if mobile? # open the filter dropdown
-    choose('Outgoing')
+    check('Outgoing')
 
     expect(page).to have_link(href: "/request/show/#{outgoing_request.number}")
     expect(page).to have_no_link(href: "/request/show/#{incoming_request.number}")

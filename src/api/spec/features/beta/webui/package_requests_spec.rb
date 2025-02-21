@@ -47,7 +47,7 @@ RSpec.describe 'Package Requests' do
     # rubocop:disable RSpec/ExampleLength
     it 'filters incoming requests' do
       find_by_id('requests-dropdown-trigger').click if mobile? # open the filter dropdown
-      choose('Incoming')
+      check('Incoming')
       execute_script('$("#content-selector-filters-form").submit()')
 
       expect(page).to have_link(href: "/request/show/#{incoming_request.number}")
@@ -57,7 +57,7 @@ RSpec.describe 'Package Requests' do
 
     it 'filters outgoing requests' do
       find_by_id('requests-dropdown-trigger').click if mobile? # open the filter dropdown
-      choose('Outgoing')
+      check('Outgoing')
       execute_script('$("#content-selector-filters-form").submit()')
 
       expect(page).to have_link(href: "/request/show/#{outgoing_request.number}")
